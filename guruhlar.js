@@ -21,6 +21,14 @@ const groupSchema = new mongoose.Schema({
 groupSchema.index({ userId: 1, groupId: 1 }, { unique: true });
 const Group = mongoose.models.Group || mongoose.model('Group', groupSchema);
 
+// ─── Telegramda Group/Channel ID sini to'g'ri formatlash ──────────────────
+function formatTelegramId(id) {
+  // Telegram channellari uchun manfi raqam beradi, guruhlar uchun musbat
+  // GramJS/telegram-client lar buni BigInt sifatida berishi mumkin
+  const numId = typeof id === 'bigint' ? Number(id) : Number(id);
+  return String(numId);
+}
+
 // ─── Guruhlarni sozlash asosiy menyu ────────────────────────────────────────
 async function guruhlarHandler(ctx) {
   const user = await User.findOne({ userId: ctx.from.id });
@@ -95,29 +103,61 @@ async function syncGroupsFromAccount(userId, account) {
     { connectionRetries: 3 }
   );
 
-  await client.connect();
+  let connected = false;
+  let dialogs = [];
 
-  let dialogs;
   try {
-    // limit: 0 ba'zi GramJS versiyalarida barqaror ishlamasligi mumkin,
-    // shuning uchun ishonchli katta son beramiz — kutubxona buni ichida
-    // avtomatik sahifalab (pagination) hammasini olib keladi.
-    dialogs = await client.getDialogs({ limit: 1000 });
+    await client.connect();
+    connected = true;
+
+    // Dialoglarnin o'chirilish: limit: 0 ba'zi GramJS versiyalarida
+    // notog'ri ishlasligi mumkin, shuning uchun katta limit beramiz
+    try {
+      dialogs = await client.getDialogs({ limit: 500 });
+    } catch (err) {
+      console.warn('[guruhlar] getDialogs limit:500 bilan xato, limit:100 bilan urinish:', err.message);
+      try {
+        dialogs = await client.getDialogs({ limit: 100 });
+      } catch (err2) {
+        console.warn('[guruhlar] getDialogs limit:100 ham xato, limit asiz urinish:', err2.message);
+        dialogs = await client.getDialogs();
+      }
+    }
+
   } finally {
-    try { await client.disconnect(); } catch {}
+    if (connected) {
+      try { await client.disconnect(); } catch {}
+    }
+  }
+
+  if (!dialogs || dialogs.length === 0) {
+    console.log(`[guruhlar] sync: hech qanday dialog topilmadi (userId: ${userId})`);
+    return await Group.find({ userId }).sort({ order: 1 });
   }
 
   // Faqat guruh va kanallar (shaxsiy chatlar/botlar chiqarib tashlanadi)
-  const chatDialogs = dialogs.filter(d => d.isGroup || d.isChannel);
+  // Telegram-client uchun: isGroup, isBroadcast (kanal)
+  const chatDialogs = dialogs.filter(d => {
+    return (d.isGroup || d.isChannel || d.isBroadcast);
+  });
 
   const syncedIds = [];
   let hadErrors = false;
+  let skippedCount = 0;
+
   for (let i = 0; i < chatDialogs.length; i++) {
     const d = chatDialogs[i];
     try {
-      const groupId = String(d.id);
-      if (!groupId) throw new Error('groupId aniqlanmadi');
-      const groupName = d.title || 'Nomsiz guruh';
+      // ID ni to'g'ri formatla (BigInt bo'lishi mumkin)
+      const groupId = formatTelegramId(d.id);
+      const groupName = (d.title || d.name || 'Nomsiz guruh').trim();
+
+      if (!groupId) {
+        skippedCount++;
+        console.warn('[guruhlar] groupId aniqlanmadi, o\'tkazib yuborildi');
+        continue;
+      }
+
       syncedIds.push(groupId);
 
       await Group.findOneAndUpdate(
@@ -128,24 +168,30 @@ async function syncGroupsFromAccount(userId, account) {
         },
         { upsert: true }
       );
+
     } catch (err) {
       hadErrors = true;
-      console.error('[guruhlar] dialog sinxronlashda xato, o\'tkazib yuborildi:', err.message);
+      skippedCount++;
+      console.error('[guruhlar] dialog sinxronlashda xato:', err.message);
     }
   }
 
-  console.log(`[guruhlar] sync: ${syncedIds.length}/${chatDialogs.length} ta guruh/kanal saqlandi (userId: ${userId})`);
+  console.log(
+    `[guruhlar] sync: ${syncedIds.length} ta saqlandi, ` +
+    `${skippedCount} ta o'tkazib yuborildi (jami: ${chatDialogs.length}, userId: ${userId})`
+  );
 
   // Akkaunt endi a'zo bo'lmagan guruhlarni ro'yxatdan olib tashlaymiz.
   // MUHIM: agar sinxronlashda xatolar bo'lgan bo'lsa (ba'zi guruhlar
-  // o'qilmagan bo'lishi mumkin), tozalashni o'tkazib yuboramiz — aks holda
-  // haqiqatda mavjud, lekin vaqtincha o'qib bo'lmagan guruhlar bazadan
-  // noto'g'ri o'chirilib ketishi mumkin edi.
-  if (!hadErrors) {
+  // o'qilmagan bo'lishi mumkin), tozalashni o'tkazib yuboramiz.
+  if (!hadErrors && syncedIds.length > 0) {
     await Group.deleteMany({ userId, groupId: { $nin: syncedIds } });
+  } else if (!hadErrors && syncedIds.length === 0) {
+    // Agar hech qanday ID saqlanganligi bo'lmasa, barcha guruhlarni o'chirib tashlash xavfli
+    console.warn('[guruhlar] hech qanday guruh saqlanganligi yo\'q, bazani o\'chirishdik o\'tkazib yubolmoqda');
   }
 
-  return Group.find({ userId }).sort({ order: 1 });
+  return await Group.find({ userId }).sort({ order: 1 });
 }
 
 // ─── Sahifalangan guruhlar ro'yxatini chizish ───────────────────────────────
@@ -173,17 +219,23 @@ async function showGroupList(ctx, page = 0, { forceSync = false, edit = false } 
       groups = await syncGroupsFromAccount(userId, account);
     } catch (err) {
       console.error('[guruhlar] sync xato:', err.message);
-      if (loading) { try { await ctx.telegram.deleteMessage(ctx.chat.id, loading.message_id); } catch {} }
+      if (loading) { 
+        try { await ctx.telegram.deleteMessage(ctx.chat.id, loading.message_id); } catch {} 
+      }
       const text =
         '❌ *Guruhlarni yuklab bo\'lmadi*\n\n' +
-        'Akkaunt sessiyasi eskirgan bo\'lishi mumkin. Akkauntni qayta ulab ko\'ring.';
+        'Akkaunt sessiyasi eskirgan bo\'lishi mumkin. Akkauntni qayta ulab ko\'ring.\n\n' +
+        '🔍 Xato: ' + err.message;
       const kb = Markup.inlineKeyboard([
         [Markup.button.callback('🔄 Qayta urinish', 'gsy:0')],
         [Markup.button.callback('⬅️ Orqaga', 'guruhlar_menu')]
       ]);
+      if (edit) return ctx.editMessageText(text, { parse_mode: 'Markdown', ...kb });
       return ctx.reply(text, { parse_mode: 'Markdown', ...kb });
     }
-    if (loading) { try { await ctx.telegram.deleteMessage(ctx.chat.id, loading.message_id); } catch {} }
+    if (loading) { 
+      try { await ctx.telegram.deleteMessage(ctx.chat.id, loading.message_id); } catch {} 
+    }
     page = 0;
   }
 
@@ -351,6 +403,7 @@ const addGroupScene = new Scenes.WizardScene(
       await ctx.scene.leave();
       await showGroupList(ctx, 0);
     } catch (err) {
+      console.error('[guruhlar] guruh qo\'shishda xato:', err.message);
       await ctx.reply('❌ Xatolik. Qayta kiriting:');
     }
   }
@@ -382,7 +435,9 @@ async function onBotAddedToGroup(ctx) {
         },
         { upsert: true }
       );
-    } catch {}
+    } catch (err) {
+      console.error('[guruhlar] bot qo\'shilishda xato:', err.message);
+    }
   }
 }
 
