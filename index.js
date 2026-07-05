@@ -70,7 +70,7 @@ function mainMenuKeyboard() {
   ]).resize();
 }
 
-// MarkdownV2 uchun maxsus belgilarni ekranlash.
+// MarkdownV2 uchun maxsus belgilarni ekranlash (oddiy matn uchun).
 // BUG FIX: oldin ctx.from.first_name to'g'ridan-to'g'ri Markdown matn ichiga
 // qo'yilardi. Agar odamning ismida _ * [ ] ( ) va h.k. belgilar bo'lsa,
 // Telegram ularni formatlash buyrug'i deb tushunib, butun xabarni
@@ -79,31 +79,56 @@ function escapeMdV2(text) {
   return String(text ?? '').replace(/[_*[\]()~`>#+\-=|{}.!\\]/g, '\\$&');
 }
 
+// `code` (backtick) ichidagi matn uchun alohida ekranlash kerak — u yerda
+// FAQAT backslash va backtick belgilari ekranlanadi. Oldin telefon raqami
+// ham escapeMdV2() bilan ekranlangani uchun "+" oldida ortiqcha "\" chiqib
+// qolgan edi ("\+998..." kabi).
+function escapeMdV2Code(text) {
+  return String(text ?? '').replace(/[`\\]/g, '\\$&');
+}
+
 async function showMainMenu(ctx) {
-  const safeName = escapeMdV2(ctx.from.first_name);
+  const acc = await Account.findOne({ userId: ctx.from.id, isActive: true });
 
-  // ">" bilan boshlangan qatorlar MarkdownV2'da "quote block" (chapdan
-  // chiziq bilan ajratilgan blok) sifatida chiqadi — rasmdagi ko'rinishga
-  // mos keladi.
-  const menuText =
-    `◇ *AUTO HABAR PRO*\n` +
-    `${'─'.repeat(30)}\n\n` +
-    `Salom, ${safeName} 👋\n\n` +
-    `>› Akkaunt qo'shing\n` +
-    `>› Guruhlarni sozlang\n` +
-    `>› Habarni sozlang\n` +
-    `>› Autohabarni ishga tushuring`;
+  // ── Akkaunt ulanmagan bo'lsa: "AUTO HABAR PRO" kartasi + tagida tugma ──
+  if (!acc) {
+    const safeName = escapeMdV2(ctx.from.first_name);
 
-  await ctx.reply(menuText, {
-    parse_mode: 'MarkdownV2',
-    ...mainMenuKeyboard()
-  });
+    // ">" bilan boshlangan qatorlar MarkdownV2'da "quote block" (chapdan
+    // chiziq bilan ajratilgan blok) sifatida chiqadi.
+    const menuText =
+      `◇ *AUTO HABAR PRO*\n` +
+      `${'─'.repeat(30)}\n\n` +
+      `Salom, ${safeName} 👋\n\n` +
+      `>› Akkaunt qo'shing\n` +
+      `>› Guruhlarni sozlang\n` +
+      `>› Habarni sozlang\n` +
+      `>› Autohabarni ishga tushuring`;
 
-  await ctx.reply('👇 Kerakli tugmani pastdan tanlang:', {
-    ...Markup.inlineKeyboard([
-      [Markup.button.callback('➕ Akkaunt qo\'shish', 'add_account')]
-    ])
-  });
+    return ctx.reply(menuText, {
+      parse_mode: 'MarkdownV2',
+      ...Markup.inlineKeyboard([
+        [Markup.button.callback('➕ Akkaunt qo\'shish', 'add_account')]
+      ])
+    });
+  }
+
+  // ── Akkaunt ulangan bo'lsa: "Boshqaruv Paneli" ──
+  const user = await User.findOne({ userId: ctx.from.id });
+  const interval = user?.interval || 300;
+  const tarif = user?.tarif === 'pro' ? 'Pro' : 'Bepul';
+
+  const panelText =
+    `⚙️ *Boshqaruv Paneli*\n` +
+    `${'━'.repeat(20)}\n\n` +
+    `📱 Ulangan: \`${escapeMdV2Code(acc.phone)}\`\n\n` +
+    `🚀 Auto Habar: 🔘 O'chiq\n` +
+    `💎 Sizning Tarifingiz: 🔘 ${escapeMdV2(tarif)}\n` +
+    `⏱ Interval: ${interval} soniya\n` +
+    `${'━'.repeat(20)}\n\n` +
+    `👇 Kerakli tugmani pastdan tanlang:`;
+
+  return ctx.reply(panelText, { parse_mode: 'MarkdownV2' });
 }
 
 // ─── /start ───────────────────────────────────────────────────────────────────
@@ -125,7 +150,11 @@ bot.start(async (ctx) => {
   }
 
   await ctx.reply('✅ Obuna tasdiqlandi!');
-  await ctx.reply('📊 *Asosiy menyu:*', { parse_mode: 'Markdown' });
+  // Pastki asosiy klaviatura shu yerda o'rnatiladi (bir marta yetarli —
+  // keyingi xabarlarda ham ekranda saqlanib qoladi), shuning uchun
+  // "AUTO HABAR PRO" / "Boshqaruv Paneli" kartasiga faqat kerakli inline
+  // tugma biriktiriladi.
+  await ctx.reply('📊 *Asosiy menyu:*', { parse_mode: 'Markdown', ...mainMenuKeyboard() });
   await showMainMenu(ctx);
 });
 
@@ -138,7 +167,7 @@ bot.action('check_sub', async (ctx) => {
   }
   try { await ctx.deleteMessage(); } catch {}
   await ctx.reply('✅ Obuna tasdiqlandi!');
-  await ctx.reply('📊 *Asosiy menyu:*', { parse_mode: 'Markdown' });
+  await ctx.reply('📊 *Asosiy menyu:*', { parse_mode: 'Markdown', ...mainMenuKeyboard() });
   await showMainMenu(ctx);
 });
 
