@@ -12,7 +12,7 @@ const Account = require('./Account');
 const addAccountScene = require('./addAccount');
 
 const { intervalHandler, setIntervalAction, intervalInfoAction, intervalManualScene } = require('./interval');
-const { guruhlarHandler, groupModeAllAction, groupModeSelectAction, toggleGroupAction, addGroupScene, onBotAddedToGroup } = require('./guruhlar');
+const { guruhlarHandler, groupModeAllAction, groupModeSelectAction, toggleGroupAction, groupPageAction, groupSelectAllAction, groupSaveAction, groupSyncAction, addGroupScene, onBotAddedToGroup } = require('./guruhlar');
 const { habarMatniHandler, msgForwardLockedAction, msgMultiLockedAction, textMsgScene, photoMsgScene, buttonMsgScene } = require('./habarMatni');
 const { profillarHandler, profileDetailAction, profileToggleAction, profileDeleteAction } = require('./profillar');
 
@@ -156,7 +156,11 @@ bot.action(/^set_interval_/,   setIntervalAction);
 // Guruh actions
 bot.action('group_mode_all',   groupModeAllAction);
 bot.action('group_mode_select',groupModeSelectAction);
-bot.action(/^toggle_group_/,   toggleGroupAction);
+bot.action(/^tgl:/,            toggleGroupAction);   // guruhni tanlash/bekor qilish
+bot.action(/^gpg:/,             groupPageAction);      // sahifani almashtirish
+bot.action(/^gsa:/,             groupSelectAllAction); // hammasini tanlash
+bot.action(/^gsv:/,             groupSaveAction);      // saqlash
+bot.action(/^gsy:/,             groupSyncAction);      // akkauntdan qayta yuklash
 bot.action('add_group_manual', (ctx) => { ctx.answerCbQuery(); ctx.scene.enter('ADD_GROUP'); });
 
 // Habar matni actions
