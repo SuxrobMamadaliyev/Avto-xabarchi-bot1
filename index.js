@@ -221,6 +221,12 @@ bot.hears('🙋 Yordam', (ctx) =>
 bot.hears('📖 Qo\'llanma', (ctx) => ctx.reply('📖 Qo\'llanma (tez kunda)...'));
 bot.hears('↩️ Autoreply',  (ctx) => ctx.reply('↩️ Autoreply (tez kunda)...'));
 
+// ─── GURUH ID SI ──────────────────────────────────────────────────────────────
+// guruhlar.js ichida "Guruhda /id yozing" deyilgan, lekin bu buyruq mavjud emas edi
+bot.command('id', async (ctx) => {
+  await ctx.reply(`🆔 Chat ID: \`${ctx.chat.id}\``, { parse_mode: 'Markdown' });
+});
+
 // ─── BOT GURUHGA QO'SHILGANDA ─────────────────────────────────────────────────
 bot.on('my_chat_member', onBotAddedToGroup);
 
