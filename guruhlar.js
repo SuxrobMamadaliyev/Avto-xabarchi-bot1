@@ -194,7 +194,23 @@ function btnFor(g, selectedSet, page) {
     `tgl:${g.groupId}:${page}`
   );
 }
-function trunc(s, n) { return s?.length > n ? s.slice(0, n - 1) + '…' : (s || ''); }
+function trunc(s, n) {
+  if (!s) return '';
+  // Emoji surrogate pair yoki boshqa maxsus belgilarni saqlab, kod-nuqta bo'yicha kesamiz
+  const chars = Array.from(s); // har bir belgi (emoji ham) to'g'ri hisoblanadi
+  if (chars.length <= n) return sanitize(s);
+  return sanitize(chars.slice(0, n - 1).join('')) + '…';
+}
+
+// Telegram inline tugma matni uchun xavfsizlashtirish:
+// lone-surrogate va boshqa noto'g'ri belgilarni olib tashlaydi
+function sanitize(str) {
+  return String(str)
+    .replace(/[\u0000-\u001F\u007F]/g, '')       // control belgilar
+    .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g, '') // yolg'iz high surrogate
+    .replace(/(?:[^\uD800-\uDBFF]|^)[\uDC00-\uDFFF]/g, m => m.length > 1 ? m : '') // yolg'iz low surrogate
+    .trim() || 'Nomsiz guruh';
+}
 
 // ─── Actions ─────────────────────────────────────────────────────────────────
 async function toggleGroupAction(ctx) {
