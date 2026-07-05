@@ -58,44 +58,53 @@ async function getGroups(ctx, account, forceRefresh = false) {
   return groups;
 }
 
-// ─── Guruhlarni sozlash — ochilganda darhol yuklanadi ────────────────────────
+// ─── Guruhlarni sozlash ───────────────────────────────────────────────────────
 async function guruhlarHandler(ctx) {
-  const userId  = ctx.from.id;
-
-  if (ctx.callbackQuery) await ctx.answerCbQuery();
-
-  const account = await Account.findOne({ userId, isActive: true });
-  if (!account) {
-    return ctx.reply(
-      '⚠️ *Avval akkaunt ulang!*',
-      {
-        parse_mode: 'Markdown',
-        ...Markup.inlineKeyboard([
-          [Markup.button.callback('➕ Akkaunt qo\'shish', 'add_account')]
-        ])
-      }
-    );
-  }
-
-  // Loading xabari
-  const loadingMsg = ctx.callbackQuery
-    ? null
-    : await ctx.reply('⏳ Guruhlar yuklanmoqda...');
-
-  let groups;
   try {
-    groups = await getGroups(ctx, account, false);
+    const userId = ctx.from.id;
+    if (ctx.callbackQuery) await ctx.answerCbQuery().catch(() => {});
+
+    const account = await Account.findOne({ userId, isActive: true });
+    if (!account) {
+      const text = '⚠️ *Avval akkaunt ulang!*';
+      const kb   = Markup.inlineKeyboard([[Markup.button.callback('➕ Akkaunt qo\'shish', 'add_account')]]);
+      return ctx.callbackQuery
+        ? ctx.editMessageText(text, { parse_mode: 'Markdown', ...kb }).catch(() => ctx.reply(text, { parse_mode: 'Markdown', ...kb }))
+        : ctx.reply(text, { parse_mode: 'Markdown', ...kb });
+    }
+
+    // Darhol "Yuklanmoqda" xabarini yuboramiz — foydalanuvchi kutmaydi
+    const sent = await ctx.reply('⏳ Guruhlar yuklanmoqda...');
+
+    let groups = [];
+    let errText = null;
+    try {
+      groups = await getGroups(ctx, account, false);
+    } catch (err) {
+      errText = err.message;
+    }
+
+    // Loading xabarini o'chiramiz
+    await ctx.telegram.deleteMessage(ctx.chat.id, sent.message_id).catch(() => {});
+
+    if (errText) {
+      return ctx.reply(
+        `❌ *Guruhlarni yuklashda xato:*\n\`${errText}\``,
+        {
+          parse_mode: 'Markdown',
+          ...Markup.inlineKeyboard([
+            [Markup.button.callback('🔄 Qayta urinish', 'guruhlar_menu')],
+            [Markup.button.callback('⬅️ Orqaga', 'main_menu')]
+          ])
+        }
+      );
+    }
+
+    await showGroupList(ctx, 0, { groups, edit: false });
   } catch (err) {
-    if (loadingMsg) { try { await ctx.deleteMessage(loadingMsg.message_id); } catch {} }
-    return ctx.reply(`❌ *Xato:* \`${err.message}\``, {
-      parse_mode: 'Markdown',
-      ...Markup.inlineKeyboard([[Markup.button.callback('🔄 Qayta', 'guruhlar_menu')]])
-    });
+    console.error('[guruhlar] guruhlarHandler xato:', err.message);
+    ctx.reply('❌ Xato yuz berdi. Qayta urinib ko\'ring.').catch(() => {});
   }
-
-  if (loadingMsg) { try { await ctx.telegram.deleteMessage(ctx.chat.id, loadingMsg.message_id); } catch {} }
-
-  await showGroupList(ctx, 0, { groups, forceRefresh: false, edit: !!ctx.callbackQuery });
 }
 
 async function groupModeAllAction(ctx) {
