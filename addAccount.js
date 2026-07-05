@@ -62,8 +62,11 @@ const addAccountScene = new Scenes.WizardScene(
 
       const result = await client.sendCode(
         { apiId: API_ID, apiHash: API_HASH },
-        phone
+        phone,
+        true // forceSMS: kodni SMS orqali yuborishga majburlaydi
       );
+
+      console.log(`[addAccount] Kod yuborildi -> phone: ${phone}, type: ${result.type?.className || 'unknown'}`);
 
       pendingClients.set(userId, {
         client,
@@ -88,6 +91,10 @@ const addAccountScene = new Scenes.WizardScene(
       if (err.message.includes('PHONE_NUMBER_INVALID')) msg = '❌ Telefon raqam noto\'g\'ri!';
       if (err.message.includes('PHONE_NUMBER_BANNED'))  msg = '❌ Bu raqam ban yegan!';
       if (err.message.includes('API_ID_INVALID'))       msg = '❌ API sozlamalarida xato. Adminga murojaat qiling.';
+      if (err.message.includes('FLOOD_WAIT')) {
+        const seconds = err.message.match(/FLOOD_WAIT_(\d+)/)?.[1] || '?';
+        msg = `⏳ Juda ko'p urinish qildingiz. Telegram ${seconds} soniyaga bloklagan. Shuncha vaqtdan keyin qayta urinib ko'ring.`;
+      }
 
       await ctx.reply(msg);
       return ctx.scene.leave();
