@@ -87,7 +87,7 @@ const addAccountScene = new Scenes.WizardScene(
       console.error('[addAccount] sendCode:', err.message);
       try { await ctx.telegram.deleteMessage(ctx.chat.id, loadingMsg.message_id); } catch {}
 
-      let msg = '❌ Xatolik yuz berdi.';
+      let msg = `❌ Xatolik: ${err.message}`; // vaqtincha: aniq xatoni ko'rsatamiz (debug uchun)
       if (err.message.includes('PHONE_NUMBER_INVALID')) msg = '❌ Telefon raqam noto\'g\'ri!';
       if (err.message.includes('PHONE_NUMBER_BANNED'))  msg = '❌ Bu raqam ban yegan!';
       if (err.message.includes('API_ID_INVALID'))       msg = '❌ API sozlamalarida xato. Adminga murojaat qiling.';
