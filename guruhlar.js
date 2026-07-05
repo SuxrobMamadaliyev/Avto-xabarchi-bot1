@@ -99,7 +99,10 @@ async function syncGroupsFromAccount(userId, account) {
 
   let dialogs;
   try {
-    dialogs = await client.getDialogs({ limit: 200 });
+    // limit: 0 — GramJS'da bu "cheksiz" (barcha dialoglarni olish) degani.
+    // Oldin limit: 200 bo'lgani uchun 200 tadan ortiq guruhga a'zo
+    // akkauntlarda qolgan guruhlar umuman ko'rinmas edi.
+    dialogs = await client.getDialogs({ limit: 0 });
   } finally {
     try { await client.disconnect(); } catch {}
   }
@@ -110,19 +113,31 @@ async function syncGroupsFromAccount(userId, account) {
   const syncedIds = [];
   for (let i = 0; i < chatDialogs.length; i++) {
     const d = chatDialogs[i];
-    const groupId = d.id.toString();
-    const groupName = d.title || 'Nomsiz guruh';
-    syncedIds.push(groupId);
+    try {
+      // Ba'zi dialoglarda id/entity to'liq bo'lmasligi mumkin (masalan,
+      // o'chirilgan yoki kirish cheklangan chatlar). Bunday elementni
+      // o'tkazib yuborish kerak, aks holda butun sinxronlash to'xtab qolib,
+      // hech qanday guruh saqlanmay qolardi.
+      if (!d.id) continue;
 
-    await Group.findOneAndUpdate(
-      { userId, groupId },
-      {
-        $set: { userId, groupId, groupName, order: i },
-        $setOnInsert: { selected: true }
-      },
-      { upsert: true }
-    );
+      const groupId = d.id.toString();
+      const groupName = d.title || 'Nomsiz guruh';
+      syncedIds.push(groupId);
+
+      await Group.findOneAndUpdate(
+        { userId, groupId },
+        {
+          $set: { userId, groupId, groupName, order: i },
+          $setOnInsert: { selected: true }
+        },
+        { upsert: true }
+      );
+    } catch (err) {
+      console.error('[guruhlar] dialog sinxronlashda xato, o\'tkazib yuborildi:', err.message);
+    }
   }
+
+  console.log(`[guruhlar] sync: ${syncedIds.length} ta guruh/kanal topildi (userId: ${userId})`);
 
   // Akkaunt endi a'zo bo'lmagan guruhlarni ro'yxatdan olib tashlaymiz
   await Group.deleteMany({ userId, groupId: { $nin: syncedIds } });
@@ -244,7 +259,7 @@ function truncate(str, max) {
 // Guruhni tanlash/bekor qilish (bitta guruh)
 async function toggleGroupAction(ctx) {
   const [, id, pageStr] = ctx.callbackQuery.data.split(':');
-  const group = await Group.findById(id);
+  const group = await Group.findOne({ _id: id, userId: ctx.from.id });
   if (!group) return ctx.answerCbQuery('❌ Guruh topilmadi', { show_alert: true });
 
   group.selected = !group.selected;
