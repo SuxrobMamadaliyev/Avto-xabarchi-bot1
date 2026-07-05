@@ -80,11 +80,6 @@ function escapeMdV2(text) {
 }
 
 async function showMainMenu(ctx) {
-  const acc = await Account.findOne({ userId: ctx.from.id, isActive: true });
-  const user = await User.findOne({ userId: ctx.from.id });
-  const interval = user?.interval || 300;
-  const intervalMin = interval / 60;
-
   const safeName = escapeMdV2(ctx.from.first_name);
 
   // ">" bilan boshlangan qatorlar MarkdownV2'da "quote block" (chapdan
@@ -104,16 +99,7 @@ async function showMainMenu(ctx) {
     ...mainMenuKeyboard()
   });
 
-  const statusText =
-    `👤 *Ulangan:* ${acc ? `\`${escapeMdV2(acc.phone)}\`` : 'Yo\'q'}\n\n` +
-    `🤖 Auto Habar: ❌ O'chiq\n` +
-    `⭐ Sizning Tarifingiz: 💙 *Bepul*\n` +
-    `⏱ Interval: ${intervalMin} daqiqa\n\n` +
-    `👇\n` +
-    `_Kerakli tugmani pastdan tanlang:_`;
-
-  await ctx.reply(statusText, {
-    parse_mode: 'Markdown',
+  await ctx.reply('👇 Kerakli tugmani pastdan tanlang:', {
     ...Markup.inlineKeyboard([
       [Markup.button.callback('➕ Akkaunt qo\'shish', 'add_account')]
     ])
