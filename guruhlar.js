@@ -23,10 +23,14 @@ const Group = mongoose.models.Group || mongoose.model('Group', groupSchema);
 
 // ─── Telegramda Group/Channel ID sini to'g'ri formatlash ──────────────────
 function formatTelegramId(id) {
-  // Telegram channellari uchun manfi raqam beradi, guruhlar uchun musbat
-  // GramJS/telegram-client lar buni BigInt sifatida berishi mumkin
-  const numId = typeof id === 'bigint' ? Number(id) : Number(id);
-  return String(numId);
+  // BUG FIX 1: BigInt → Number → String qilish XATO!
+  // Telegram channel ID lari katta son (-1001234567890123),
+  // Number() ga o'tkazganda JavaScript precision yo'qotadi (MAX_SAFE_INTEGER
+  // chegarasidan o'tganda raqam buziladi). Natijada MongoDB unique index
+  // xatosi chiqadi va faqat birinchi guruh saqlanadi.
+  // TO'G'RI YO'L: BigInt ni to'g'ridan-to'g'ri String ga o'tkazish.
+  if (typeof id === 'bigint') return id.toString();
+  return String(id);
 }
 
 // ─── Guruhlarni sozlash asosiy menyu ────────────────────────────────────────
@@ -110,16 +114,19 @@ async function syncGroupsFromAccount(userId, account) {
     await client.connect();
     connected = true;
 
-    // Dialoglarnin o'chirilish: limit: 0 ba'zi GramJS versiyalarida
-    // notog'ri ishlasligi mumkin, shuning uchun katta limit beramiz
+    // BUG FIX 2: getDialogs({ limit: 500 }) GramJS da ishonchsiz —
+    // birinchi API batchini (odatda 20-30 ta) qaytaradi, qolganlarini
+    // kesib tashlaydi. iterDialogs() esa barcha dialoglarni ketma-ket
+    // o'qib, avtomatik paginate qiladi.
     try {
-      dialogs = await client.getDialogs({ limit: 500 });
+      for await (const dialog of client.iterDialogs()) {
+        dialogs.push(dialog);
+      }
     } catch (err) {
-      console.warn('[guruhlar] getDialogs limit:500 bilan xato, limit:100 bilan urinish:', err.message);
+      console.warn('[guruhlar] iterDialogs xato, getDialogs ga fallback:', err.message);
       try {
-        dialogs = await client.getDialogs({ limit: 100 });
+        dialogs = await client.getDialogs({ limit: 500 });
       } catch (err2) {
-        console.warn('[guruhlar] getDialogs limit:100 ham xato, limit asiz urinish:', err2.message);
         dialogs = await client.getDialogs();
       }
     }
