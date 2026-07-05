@@ -50,8 +50,9 @@ const addAccountScene = new Scenes.WizardScene(
 
     const loadingMsg = await ctx.reply('⏳ Ulanilmoqda...');
 
+    let client; // catch blokida ham ishlatiladi, shuning uchun tashqarida e'lon qilinadi
     try {
-      const client = new TelegramClient(
+      client = new TelegramClient(
         new StringSession(''),
         API_ID,
         API_HASH,
@@ -155,7 +156,7 @@ const addAccountScene = new Scenes.WizardScene(
 
       if (err.message.includes('SESSION_PASSWORD_NEEDED')) {
         await ctx.reply(
-          '🔐 *2FA parol yoqilgan!*\n\nTelegram parolингизни kiriting:',
+          '🔐 *2FA parol yoqilgan!*\n\nTelegram parolingizni kiriting:',
           { parse_mode: 'Markdown' }
         );
         return ctx.wizard.next();
