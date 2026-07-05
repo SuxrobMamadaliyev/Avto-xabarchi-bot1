@@ -27,7 +27,6 @@ async function fetchLiveGroups(account) {
     try { await client.disconnect(); } catch {}
   }
 
-  // Guruh va kanallar (shaxsiy chatlar chiqariladi)
   return dialogs
     .filter(d => d.isGroup || d.isChannel || d.isBroadcast)
     .map((d, i) => ({
@@ -37,10 +36,8 @@ async function fetchLiveGroups(account) {
     }));
 }
 
-// ─── Guruhlarni session cacheda saqlash (pagination uchun) ───────────────────
-// Har safar GramJS ga ulanmaslik uchun 5 daqiqalik cache ishlatamiz.
-// "Yangilash" tugmasi cache ni tozalab, qayta yuklaydi.
-const CACHE_TTL = 5 * 60 * 1000; // 5 daqiqa
+// ─── Cache (session da, 2 daqiqa) ────────────────────────────────────────────
+const CACHE_TTL = 2 * 60 * 1000;
 
 async function getGroups(ctx, account, forceRefresh = false) {
   const accountId = account._id.toString();
@@ -53,47 +50,53 @@ async function getGroups(ctx, account, forceRefresh = false) {
     (now - cache.ts) < CACHE_TTL &&
     cache.groups?.length > 0
   ) {
-    return cache.groups; // cache dan
+    return cache.groups;
   }
 
-  // GramJS dan yangi olish
   const groups = await fetchLiveGroups(account);
-
   if (!ctx.session) ctx.session = {};
   ctx.session.groupsCache = { groups, accountId, ts: now };
-
   return groups;
 }
 
-// ─── Asosiy menyu ─────────────────────────────────────────────────────────────
+// ─── Guruhlarni sozlash — ochilganda darhol yuklanadi ────────────────────────
 async function guruhlarHandler(ctx) {
   const userId  = ctx.from.id;
+
+  if (ctx.callbackQuery) await ctx.answerCbQuery();
+
   const account = await Account.findOne({ userId, isActive: true });
-  const user    = await User.findOne({ userId });
-  const mode    = user?.groupMode || 'all';
-  const selCount = user?.selectedGroups?.length || 0;
-
-  const text =
-    `💬 *Guruhlarni sozlash*\n` +
-    `${'━'.repeat(22)}\n\n` +
-    `📱 Akkaunt: ${account ? account.phone : '❌ Ulanmagan'}\n` +
-    `📋 Rejim: ${mode === 'all' ? '🌐 Hamma guruhlarga' : `☑️ Tanlangan (${selCount} ta)`}`;
-
-  const kb = Markup.inlineKeyboard([
-    [
-      Markup.button.callback('🌐 Hammaga', 'group_mode_all'),
-      Markup.button.callback('☑️ Tanlash', 'group_mode_select')
-    ],
-    [Markup.button.callback('📋 Guruhlar ro\'yxati', 'gpg:0')],
-    [Markup.button.callback('🔄 Yangilash (live)', 'gsy:0')],
-    [Markup.button.callback('⬅️ Orqaga', 'main_menu')]
-  ]);
-
-  if (ctx.callbackQuery) {
-    await ctx.answerCbQuery();
-    try { return await ctx.editMessageText(text, { parse_mode: 'Markdown', ...kb }); } catch {}
+  if (!account) {
+    return ctx.reply(
+      '⚠️ *Avval akkaunt ulang!*',
+      {
+        parse_mode: 'Markdown',
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback('➕ Akkaunt qo\'shish', 'add_account')]
+        ])
+      }
+    );
   }
-  return ctx.reply(text, { parse_mode: 'Markdown', ...kb });
+
+  // Loading xabari
+  const loadingMsg = ctx.callbackQuery
+    ? null
+    : await ctx.reply('⏳ Guruhlar yuklanmoqda...');
+
+  let groups;
+  try {
+    groups = await getGroups(ctx, account, false);
+  } catch (err) {
+    if (loadingMsg) { try { await ctx.deleteMessage(loadingMsg.message_id); } catch {} }
+    return ctx.reply(`❌ *Xato:* \`${err.message}\``, {
+      parse_mode: 'Markdown',
+      ...Markup.inlineKeyboard([[Markup.button.callback('🔄 Qayta', 'guruhlar_menu')]])
+    });
+  }
+
+  if (loadingMsg) { try { await ctx.telegram.deleteMessage(ctx.chat.id, loadingMsg.message_id); } catch {} }
+
+  await showGroupList(ctx, 0, { groups, forceRefresh: false, edit: !!ctx.callbackQuery });
 }
 
 async function groupModeAllAction(ctx) {
@@ -105,131 +108,99 @@ async function groupModeAllAction(ctx) {
 async function groupModeSelectAction(ctx) {
   await ctx.answerCbQuery();
   await User.findOneAndUpdate({ userId: ctx.from.id }, { groupMode: 'selected' }, { upsert: true });
-  await showGroupList(ctx, 0, { edit: false });
+  await guruhlarHandler(ctx);
 }
 
-// ─── Guruhlar ro'yxatini ko'rsatish ──────────────────────────────────────────
-async function showGroupList(ctx, page = 0, { forceRefresh = false, edit = false } = {}) {
+// ─── Guruhlar ro'yxati ────────────────────────────────────────────────────────
+async function showGroupList(ctx, page = 0, { groups = null, forceRefresh = false, edit = false } = {}) {
   const userId  = ctx.from.id;
   const account = await Account.findOne({ userId, isActive: true });
+  if (!account) return;
 
-  if (!account) {
-    const text = '⚠️ *Avval akkaunt ulang!*';
-    const kb   = Markup.inlineKeyboard([
-      [Markup.button.callback('➕ Akkaunt qo\'shish', 'add_account')],
-      [Markup.button.callback('⬅️ Orqaga', 'guruhlar_menu')]
-    ]);
-    if (edit) { try { return ctx.editMessageText(text, { parse_mode: 'Markdown', ...kb }); } catch {} }
-    return ctx.reply(text, { parse_mode: 'Markdown', ...kb });
+  if (!groups) {
+    if (forceRefresh) {
+      const m = edit ? null : await ctx.reply('⏳ Yangilanmoqda...');
+      try {
+        groups = await getGroups(ctx, account, true);
+      } catch (err) {
+        if (m) { try { await ctx.telegram.deleteMessage(ctx.chat.id, m.message_id); } catch {} }
+        return ctx.reply(`❌ \`${err.message}\``, { parse_mode: 'Markdown' });
+      }
+      if (m) { try { await ctx.telegram.deleteMessage(ctx.chat.id, m.message_id); } catch {} }
+      page = 0; edit = false;
+    } else {
+      groups = await getGroups(ctx, account, false);
+    }
   }
 
-  let loadingMsg = null;
-  if (forceRefresh && !edit) {
-    loadingMsg = await ctx.reply('⏳ Guruhlar yuklanmoqda...');
-  }
+  const user        = await User.findOne({ userId }, 'selectedGroups groupMode').lean();
+  const mode        = user?.groupMode || 'all';
+  const selectedSet = new Set(user?.selectedGroups || []);
 
-  let groups;
-  try {
-    groups = await getGroups(ctx, account, forceRefresh);
-  } catch (err) {
-    if (loadingMsg) { try { await ctx.telegram.deleteMessage(ctx.chat.id, loadingMsg.message_id); } catch {} }
-    const text = `❌ *Yuklashda xato:*\n\`${err.message}\``;
-    const kb   = Markup.inlineKeyboard([
-      [Markup.button.callback('🔄 Qayta urinish', 'gsy:0')],
-      [Markup.button.callback('⬅️ Orqaga', 'guruhlar_menu')]
-    ]);
-    if (edit) { try { return ctx.editMessageText(text, { parse_mode: 'Markdown', ...kb }); } catch {} }
-    return ctx.reply(text, { parse_mode: 'Markdown', ...kb });
-  }
-
-  if (loadingMsg) { try { await ctx.telegram.deleteMessage(ctx.chat.id, loadingMsg.message_id); } catch {} }
-
-  if (!groups.length) {
-    const text = '📋 *Guruh topilmadi*\n\nAkkaunt hech qanday guruhga a\'zo emas.';
-    const kb   = Markup.inlineKeyboard([
-      [Markup.button.callback('🔄 Yangilash', 'gsy:0')],
-      [Markup.button.callback('⬅️ Orqaga', 'guruhlar_menu')]
-    ]);
-    if (edit) { try { return ctx.editMessageText(text, { parse_mode: 'Markdown', ...kb }); } catch {} }
-    return ctx.reply(text, { parse_mode: 'Markdown', ...kb });
-  }
-
-  // Tanlangan IDlar
-  const user         = await User.findOne({ userId }, 'selectedGroups').lean();
-  const selectedSet  = new Set(user?.selectedGroups || []);
-
-  const totalCount  = groups.length;
-  const totalPages  = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
+  const total       = groups.length;
+  const totalPages  = Math.max(1, Math.ceil(total / PAGE_SIZE));
   page = Math.min(Math.max(0, page), totalPages - 1);
 
-  const selectedCount = groups.filter(g => selectedSet.has(g.groupId)).length;
-  const pageItems     = groups.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE);
+  const selCount  = groups.filter(g => selectedSet.has(g.groupId)).length;
+  const pageItems = groups.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE);
 
-  const cacheAge = ctx.session?.groupsCache?.ts
-    ? Math.round((Date.now() - ctx.session.groupsCache.ts) / 1000)
-    : 0;
-
-  const text =
-    `Guruhlarni tanlang (${selectedCount} ta)\n` +
-    `Jami: ${totalCount} ta · ${cacheAge}s oldin yangilandi\n` +
-    `➕ Tanlanmagan   ✔️ Tanlangan`;
+  const header =
+    `📱 *${account.phone}*\n` +
+    `💬 Guruhlar: ${total} ta   ✅ Tanlangan: ${selCount} ta\n` +
+    `📋 Rejim: ${mode === 'all' ? '🌐 Hammaga' : '☑️ Tanlangan'}\n` +
+    (totalPages > 1 ? `📄 Sahifa: ${page + 1}/${totalPages}\n` : '') +
+    `\n➕ Tanlanmagan   ✔️ Tanlangan`;
 
   const rows = [];
+
+  // Tanlash rejimi tugmasi
+  rows.push([
+    Markup.button.callback(mode === 'selected' ? '☑️ Tanlash ✓' : '☑️ Tanlash', 'group_mode_select')
+  ]);
+
+  // Guruh tugmalari
   for (let i = 0; i < pageItems.length; i += 2) {
     const row = [btnFor(pageItems[i], selectedSet, page)];
     if (pageItems[i + 1]) row.push(btnFor(pageItems[i + 1], selectedSet, page));
     rows.push(row);
   }
 
-  const navRow = [];
-  if (page > 0)              navRow.push(Markup.button.callback('⬅️ Oldingi', `gpg:${page - 1}`));
-  if (page < totalPages - 1) navRow.push(Markup.button.callback('Keyingi ➡️', `gpg:${page + 1}`));
-  if (navRow.length) rows.push(navRow);
-
+  // Quyi tugmalar
   rows.push([
     Markup.button.callback('☑️ Hammasini tanlash', `gsa:${page}`),
-    Markup.button.callback(`💾 Saqlash (${selectedCount})`, `gsv:${page}`)
+    Markup.button.callback(`💾 Saqlash (${selCount})`, `gsv:${page}`)
   ]);
-  rows.push([
-    Markup.button.callback('🔄 Yangilash', 'gsy:0'),
-    Markup.button.callback('⬅️ Orqaga', 'guruhlar_menu')
-  ]);
+  rows.push([Markup.button.callback('⬅️ Orqaga', 'main_menu')]);
 
   const kb = Markup.inlineKeyboard(rows);
-  if (edit) { try { return await ctx.editMessageText(text, kb); } catch {} }
-  return ctx.reply(text, kb);
+
+  if (edit) {
+    try { return await ctx.editMessageText(header, { parse_mode: 'Markdown', ...kb }); } catch {}
+  }
+  return ctx.reply(header, { parse_mode: 'Markdown', ...kb });
 }
 
 function btnFor(g, selectedSet, page) {
-  const sel = selectedSet.has(g.groupId);
   return Markup.button.callback(
-    `${sel ? '✔️' : '➕'} ${truncate(g.groupName, 22)}`,
+    `${selectedSet.has(g.groupId) ? '✔️' : '➕'} ${trunc(g.groupName, 22)}`,
     `tgl:${g.groupId}:${page}`
   );
 }
-function truncate(str, max) {
-  return str?.length > max ? str.slice(0, max - 1) + '…' : (str || '');
-}
+function trunc(s, n) { return s?.length > n ? s.slice(0, n - 1) + '…' : (s || ''); }
 
 // ─── Actions ─────────────────────────────────────────────────────────────────
 async function toggleGroupAction(ctx) {
-  const parts   = ctx.callbackQuery.data.split(':');
-  const groupId = parts[1];
-  const page    = parseInt(parts[2], 10) || 0;
-  const userId  = ctx.from.id;
+  const [, groupId, pageStr] = ctx.callbackQuery.data.split(':');
+  const userId = ctx.from.id;
+  const page   = parseInt(pageStr, 10) || 0;
 
   const user = await User.findOne({ userId });
-  const arr  = user?.selectedGroups || [];
+  const arr  = [...(user?.selectedGroups || [])];
   const idx  = arr.indexOf(groupId);
 
   let isSelected;
-  if (idx === -1) {
-    arr.push(groupId);
-    isSelected = true;
-  } else {
-    arr.splice(idx, 1);
-    isSelected = false;
-  }
+  if (idx === -1) { arr.push(groupId); isSelected = true; }
+  else            { arr.splice(idx, 1); isSelected = false; }
 
   await User.findOneAndUpdate({ userId }, { selectedGroups: arr }, { upsert: true });
   await ctx.answerCbQuery(isSelected ? '✅ Tanlandi' : '➕ Bekor qilindi');
@@ -250,31 +221,58 @@ async function groupSelectAllAction(ctx) {
 
   const groups = await getGroups(ctx, account, false);
   const allIds = groups.map(g => g.groupId);
-
   await User.findOneAndUpdate({ userId }, { selectedGroups: allIds }, { upsert: true });
   await ctx.answerCbQuery(`✅ ${allIds.length} ta guruh tanlandi`);
   await showGroupList(ctx, page, { edit: true });
 }
 
 async function groupSaveAction(ctx) {
-  const page    = parseInt(ctx.callbackQuery.data.split(':')[1], 10) || 0;
-  const user    = await User.findOne({ userId: ctx.from.id });
-  const count   = user?.selectedGroups?.length || 0;
+  const page  = parseInt(ctx.callbackQuery.data.split(':')[1], 10) || 0;
+  const user  = await User.findOne({ userId: ctx.from.id }, 'selectedGroups').lean();
+  const count = user?.selectedGroups?.length || 0;
   await User.findOneAndUpdate({ userId: ctx.from.id }, { groupMode: 'selected' }, { upsert: true });
-  await ctx.answerCbQuery(`💾 Saqlandi! ${count} ta guruh tanlangan`, { show_alert: true });
+  await ctx.answerCbQuery(`💾 Saqlandi! ${count} ta guruh`, { show_alert: true });
   await showGroupList(ctx, page, { edit: true });
 }
 
 async function groupSyncAction(ctx) {
   await ctx.answerCbQuery('🔄 Yangilanmoqda...');
-  await showGroupList(ctx, 0, { forceRefresh: true, edit: false });
+  await showGroupList(ctx, 0, { forceRefresh: true, edit: true });
 }
 
-// ─── Bot guruhga qo'shilganda (optional, faqat log) ──────────────────────────
+// ─── Foydalanuvchi yangi guruhga qo'shilganda (gramjs account) ───────────────
+// Bot guruhga qo'shilsa — foydalanuvchiga xabar, cache tozalanadi
 async function onBotAddedToGroup(ctx) {
   if (!['group', 'supergroup'].includes(ctx.chat?.type)) return;
-  console.log(`[guruhlar] Bot guruhga qo'shildi: ${ctx.chat.title} (${ctx.chat.id})`);
+  if (ctx.myChatMember?.new_chat_member?.status !== 'member' &&
+      ctx.myChatMember?.new_chat_member?.status !== 'administrator') return;
+
+  const chatTitle = ctx.chat.title || 'Noma\'lum';
+  const chatId    = String(ctx.chat.id);
+
+  // Admin bo'lgan foydalanuvchilarga xabar yuboramiz
+  try {
+    const admins = await ctx.telegram.getChatAdministrators(ctx.chat.id);
+    for (const adm of admins) {
+      if (adm.user.is_bot) continue;
+      const acc = await Account.findOne({ userId: adm.user.id, isActive: true });
+      if (!acc) continue;
+
+      // Cache ni tozalaymiz — keyingi ochilganda yangi guruh ham ko'rinadi
+      // (session bazali, shuning uchun faqat log qilamiz)
+      console.log(`[guruhlar] Yangi guruh: ${chatTitle} (${chatId}) — userId:${adm.user.id}`);
+
+      await ctx.telegram.sendMessage(
+        adm.user.id,
+        `✅ *Yangi guruh qo'shildi!*\n\n💬 ${chatTitle}\n🆔 \`${chatId}\`\n\n📋 Guruhlar ro'yxatini ko'rish uchun "Guruhlarni sozlash" ni oching.`,
+        { parse_mode: 'Markdown' }
+      ).catch(() => {});
+    }
+  } catch {}
 }
+
+// Dummy scene (add_group_manual olib tashlandi)
+const addGroupScene = new Scenes.WizardScene('ADD_GROUP', ctx => ctx.scene.leave());
 
 module.exports = {
   guruhlarHandler,
@@ -285,7 +283,7 @@ module.exports = {
   groupSelectAllAction,
   groupSaveAction,
   groupSyncAction,
-  addGroupScene: new (require('telegraf').Scenes.WizardScene)('ADD_GROUP', ctx => ctx.scene.leave()),
+  addGroupScene,
   onBotAddedToGroup,
   fetchLiveGroups
 };
