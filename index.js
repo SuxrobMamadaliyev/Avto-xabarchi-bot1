@@ -16,6 +16,9 @@ const { guruhlarHandler, groupModeAllAction, groupModeSelectAction, toggleGroupA
 const { habarMatniHandler, msgForwardLockedAction, msgMultiLockedAction, textMsgScene, photoMsgScene, buttonMsgScene } = require('./habarMatni');
 const { profillarHandler, profileDetailAction, profileToggleAction, profileDeleteAction } = require('./profillar');
 
+// ─── Sender (Autohabar) ───────────────────────────────────────────────────────
+const { startAutoSend, stopAutoSend, isRunning } = require('./sender');
+
 // ─── Stage ───────────────────────────────────────────────────────────────────
 const stage = new Scenes.Stage([
   addAccountScene,
@@ -51,8 +54,7 @@ async function checkSubscription(ctx) {
 
 function subscribeKeyboard() {
   const buttons = CHANNELS.map((ch, i) =>
-    [Markup.button.url(`📢 Kanal ${i + 1}`, `https://t.me/${ch.replace('@', '')}`)]
-  );
+    [Markup.button.url(`📢 Kanal ${i + 1}`, `https://t.me/${ch.replace('@', '')}`)]);
   buttons.push([Markup.button.callback('✅ Obuna bo\'ldim', 'check_sub')]);
   return Markup.inlineKeyboard(buttons);
 }
@@ -70,32 +72,19 @@ function mainMenuKeyboard() {
   ]).resize();
 }
 
-// MarkdownV2 uchun maxsus belgilarni ekranlash (oddiy matn uchun).
-// BUG FIX: oldin ctx.from.first_name to'g'ridan-to'g'ri Markdown matn ichiga
-// qo'yilardi. Agar odamning ismida _ * [ ] ( ) va h.k. belgilar bo'lsa,
-// Telegram ularni formatlash buyrug'i deb tushunib, butun xabarni
-// chalkashtirib yuborardi ("Salom, .hhuczgjzf..." kabi chiqishlar shundan).
 function escapeMdV2(text) {
   return String(text ?? '').replace(/[_*[\]()~`>#+\-=|{}.!\\]/g, '\\$&');
 }
-
-// `code` (backtick) ichidagi matn uchun alohida ekranlash kerak — u yerda
-// FAQAT backslash va backtick belgilari ekranlanadi. Oldin telefon raqami
-// ham escapeMdV2() bilan ekranlangani uchun "+" oldida ortiqcha "\" chiqib
-// qolgan edi ("\+998..." kabi).
 function escapeMdV2Code(text) {
   return String(text ?? '').replace(/[`\\]/g, '\\$&');
 }
 
+// ─── BOSH SAHIFA ──────────────────────────────────────────────────────────────
 async function showMainMenu(ctx) {
   const acc = await Account.findOne({ userId: ctx.from.id, isActive: true });
 
-  // ── Akkaunt ulanmagan bo'lsa: "AUTO HABAR PRO" kartasi + tagida tugma ──
   if (!acc) {
     const safeName = escapeMdV2(ctx.from.first_name);
-
-    // ">" bilan boshlangan qatorlar MarkdownV2'da "quote block" (chapdan
-    // chiziq bilan ajratilgan blok) sifatida chiqadi.
     const menuText =
       `◇ *AUTO HABAR PRO*\n` +
       `${'─'.repeat(30)}\n\n` +
@@ -113,17 +102,17 @@ async function showMainMenu(ctx) {
     });
   }
 
-  // ── Akkaunt ulangan bo'lsa: "Boshqaruv Paneli" ──
   const user = await User.findOne({ userId: ctx.from.id });
   const interval = user?.interval || 300;
-  const tarif = user?.tarif === 'pro' ? 'Pro' : 'Bepul';
+  const tarif    = user?.tarif === 'pro' ? 'Pro' : 'Bepul';
+  const running  = user?.isRunning || isRunning(ctx.from.id);
 
   const panelText =
     `⚙️ *Boshqaruv Paneli*\n` +
     `${'━'.repeat(20)}\n\n` +
     `📱 Ulangan: \`${escapeMdV2Code(acc.phone)}\`\n\n` +
-    `🚀 Auto Habar: 🔘 O'chiq\n` +
-    `💎 Sizning Tarifingiz: 🔘 ${escapeMdV2(tarif)}\n` +
+    `🚀 Auto Habar: ${running ? '🟢 Yoqiq' : '🔴 O\'chiq'}\n` +
+    `💎 Tarifingiz: 🔘 ${escapeMdV2(tarif)}\n` +
     `⏱ Interval: ${interval} soniya\n` +
     `${'━'.repeat(20)}\n\n` +
     `👇 Kerakli tugmani pastdan tanlang:`;
@@ -150,10 +139,6 @@ bot.start(async (ctx) => {
   }
 
   await ctx.reply('✅ Obuna tasdiqlandi!');
-  // Pastki asosiy klaviatura shu yerda o'rnatiladi (bir marta yetarli —
-  // keyingi xabarlarda ham ekranda saqlanib qoladi), shuning uchun
-  // "AUTO HABAR PRO" / "Boshqaruv Paneli" kartasiga faqat kerakli inline
-  // tugma biriktiriladi.
   await ctx.reply('📊 *Asosiy menyu:*', { parse_mode: 'Markdown', ...mainMenuKeyboard() });
   await showMainMenu(ctx);
 });
@@ -172,47 +157,120 @@ bot.action('check_sub', async (ctx) => {
 });
 
 // ─── INLINE ACTIONS ───────────────────────────────────────────────────────────
-bot.action('add_account',      (ctx) => { ctx.answerCbQuery(); ctx.scene.enter('ADD_ACCOUNT'); });
-bot.action('main_menu',        async (ctx) => { ctx.answerCbQuery(); await showMainMenu(ctx); });
-bot.action('profillar_menu',   async (ctx) => { ctx.answerCbQuery(); await profillarHandler(ctx); });
-bot.action('guruhlar_menu',    async (ctx) => { ctx.answerCbQuery(); await guruhlarHandler(ctx); });
+bot.action('add_account',    (ctx) => { ctx.answerCbQuery(); ctx.scene.enter('ADD_ACCOUNT'); });
+bot.action('main_menu',      async (ctx) => { ctx.answerCbQuery(); await showMainMenu(ctx); });
+bot.action('profillar_menu', async (ctx) => { ctx.answerCbQuery(); await profillarHandler(ctx); });
+bot.action('guruhlar_menu',  async (ctx) => { ctx.answerCbQuery(); await guruhlarHandler(ctx); });
+
+// ─── AUTOHABAR YOQISH/O'CHIRISH (inline) ────────────────────────────────────
+bot.action('autohabar_start', async (ctx) => {
+  await ctx.answerCbQuery();
+  const userId = ctx.from.id;
+  await startAutoSend(userId, bot);
+  await ctx.editMessageText(
+    '🟢 *Autohabar yoqildi!*\n\nBot guruhlaringizga xabar yuborishni boshladi.',
+    {
+      parse_mode: 'Markdown',
+      ...Markup.inlineKeyboard([
+        [Markup.button.callback('🔴 To\'xtatish', 'autohabar_stop')],
+        [Markup.button.callback('⬅️ Orqaga', 'main_menu')]
+      ])
+    }
+  );
+});
+
+bot.action('autohabar_stop', async (ctx) => {
+  await ctx.answerCbQuery();
+  const userId = ctx.from.id;
+  await stopAutoSend(userId);
+  await ctx.editMessageText(
+    '🔴 *Autohabar to\'xtatildi.*\n\nYuborish to\'xtatildi.',
+    {
+      parse_mode: 'Markdown',
+      ...Markup.inlineKeyboard([
+        [Markup.button.callback('🟢 Yoqish', 'autohabar_start')],
+        [Markup.button.callback('⬅️ Orqaga', 'main_menu')]
+      ])
+    }
+  );
+});
 
 // Interval actions
-bot.action('interval_info',    intervalInfoAction);
-bot.action('interval_manual',  (ctx) => { ctx.answerCbQuery(); ctx.scene.enter('INTERVAL_MANUAL'); });
-bot.action(/^set_interval_/,   setIntervalAction);
+bot.action('interval_info',   intervalInfoAction);
+bot.action('interval_manual', (ctx) => { ctx.answerCbQuery(); ctx.scene.enter('INTERVAL_MANUAL'); });
+bot.action(/^set_interval_/,  setIntervalAction);
 
 // Guruh actions
-bot.action('group_mode_all',   groupModeAllAction);
-bot.action('group_mode_select',groupModeSelectAction);
-bot.action(/^tgl:/,            toggleGroupAction);   // guruhni tanlash/bekor qilish
-bot.action(/^gpg:/,             groupPageAction);      // sahifani almashtirish
-bot.action(/^gsa:/,             groupSelectAllAction); // hammasini tanlash
-bot.action(/^gsv:/,             groupSaveAction);      // saqlash
-bot.action(/^gsy:/,             groupSyncAction);      // akkauntdan qayta yuklash
-bot.action('add_group_manual', (ctx) => { ctx.answerCbQuery(); ctx.scene.enter('ADD_GROUP'); });
+bot.action('group_mode_all',    groupModeAllAction);
+bot.action('group_mode_select', groupModeSelectAction);
+bot.action(/^tgl:/,             toggleGroupAction);
+bot.action(/^gpg:/,             groupPageAction);
+bot.action(/^gsa:/,             groupSelectAllAction);
+bot.action(/^gsv:/,             groupSaveAction);
+bot.action(/^gsy:/,             groupSyncAction);
+bot.action('add_group_manual',  (ctx) => { ctx.answerCbQuery(); ctx.scene.enter('ADD_GROUP'); });
 
 // Habar matni actions
-bot.action('msg_type_text',          (ctx) => { ctx.answerCbQuery(); ctx.scene.enter('TEXT_MSG'); });
-bot.action('msg_type_photo',         (ctx) => { ctx.answerCbQuery(); ctx.scene.enter('PHOTO_MSG'); });
-bot.action('msg_type_button',        (ctx) => { ctx.answerCbQuery(); ctx.scene.enter('BUTTON_MSG'); });
-bot.action('msg_type_forward_locked',msgForwardLockedAction);
-bot.action('msg_type_multi_locked',  msgMultiLockedAction);
+bot.action('msg_type_text',           (ctx) => { ctx.answerCbQuery(); ctx.scene.enter('TEXT_MSG'); });
+bot.action('msg_type_photo',          (ctx) => { ctx.answerCbQuery(); ctx.scene.enter('PHOTO_MSG'); });
+bot.action('msg_type_button',         (ctx) => { ctx.answerCbQuery(); ctx.scene.enter('BUTTON_MSG'); });
+bot.action('msg_type_forward_locked', msgForwardLockedAction);
+bot.action('msg_type_multi_locked',   msgMultiLockedAction);
 
 // Profil actions
-bot.action(/^profile_detail_/,  profileDetailAction);
-bot.action(/^profile_toggle_/,  profileToggleAction);
-bot.action(/^profile_delete_/,  profileDeleteAction);
+bot.action(/^profile_detail_/, profileDetailAction);
+bot.action(/^profile_toggle_/, profileToggleAction);
+bot.action(/^profile_delete_/, profileDeleteAction);
 
 // ─── KEYBOARD HEARS ───────────────────────────────────────────────────────────
+
+// 🚀 AUTOHABAR — to'liq implement qilindi
 bot.hears('🚀 Autohabar yuborish', async (ctx) => {
-  const acc = await Account.findOne({ userId: ctx.from.id, isActive: true });
+  const userId = ctx.from.id;
+
+  const acc = await Account.findOne({ userId, isActive: true });
   if (!acc) {
     return ctx.reply('⚠️ Avval akkaunt qo\'shing!',
       Markup.inlineKeyboard([[Markup.button.callback('➕ Akkaunt qo\'shish', 'add_account')]])
     );
   }
-  await ctx.reply('🚀 Autohabar yuborish (tez kunda)...');
+
+  const { MsgSettings } = require('./habarMatni');
+  const { Group }       = require('./guruhlar');
+
+  const [user, msg, groupCount] = await Promise.all([
+    User.findOne({ userId }),
+    MsgSettings.findOne({ userId }),
+    Group.countDocuments({ userId })
+  ]);
+
+  const running     = user?.isRunning || isRunning(userId);
+  const groupMode   = user?.groupMode || 'all';
+  const interval    = user?.interval  || 300;
+  const selectedCount = await Group.countDocuments({ userId, selected: true });
+
+  const statusText =
+    `🚀 *Autohabar yuborish*\n` +
+    `${'━'.repeat(22)}\n\n` +
+    `📋 Holat: ${running ? '🟢 Yoqiq' : '🔴 O\'chiq'}\n` +
+    `💬 Guruhlar: ${groupMode === 'all' ? `Hammasi (${groupCount} ta)` : `Tanlangan (${selectedCount} ta)`}\n` +
+    `⏱ Interval: ${interval >= 3600 ? `${interval/3600} soat` : `${interval/60} daqiqa`}\n` +
+    `📝 Habar: ${msg?.text ? `"${msg.text.slice(0, 25)}..."` : '❌ Sozlanmagan'}\n\n` +
+    (running
+      ? '✅ Autohabar hozir ishlaydi. To\'xtatish uchun tugmani bosing.'
+      : '▶️ Boshlash uchun "Yoqish" tugmasini bosing.');
+
+  const kb = running
+    ? Markup.inlineKeyboard([
+        [Markup.button.callback('🔴 To\'xtatish', 'autohabar_stop')],
+        [Markup.button.callback('⬅️ Orqaga', 'main_menu')]
+      ])
+    : Markup.inlineKeyboard([
+        [Markup.button.callback('🟢 Yoqish', 'autohabar_start')],
+        [Markup.button.callback('⬅️ Orqaga', 'main_menu')]
+      ]);
+
+  await ctx.reply(statusText, { parse_mode: 'Markdown', ...kb });
 });
 
 bot.hears('✏️ Habar matni',        habarMatniHandler);
@@ -250,8 +308,7 @@ bot.hears('🙋 Yordam', (ctx) =>
 bot.hears('📖 Qo\'llanma', (ctx) => ctx.reply('📖 Qo\'llanma (tez kunda)...'));
 bot.hears('↩️ Autoreply',  (ctx) => ctx.reply('↩️ Autoreply (tez kunda)...'));
 
-// ─── GURUH ID SI ──────────────────────────────────────────────────────────────
-// guruhlar.js ichida "Guruhda /id yozing" deyilgan, lekin bu buyruq mavjud emas edi
+// ─── GURUH /id BUYRUG'I ───────────────────────────────────────────────────────
 bot.command('id', async (ctx) => {
   await ctx.reply(`🆔 Chat ID: \`${ctx.chat.id}\``, { parse_mode: 'Markdown' });
 });
