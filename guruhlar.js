@@ -99,10 +99,10 @@ async function syncGroupsFromAccount(userId, account) {
 
   let dialogs;
   try {
-    // limit: 0 — GramJS'da bu "cheksiz" (barcha dialoglarni olish) degani.
-    // Oldin limit: 200 bo'lgani uchun 200 tadan ortiq guruhga a'zo
-    // akkauntlarda qolgan guruhlar umuman ko'rinmas edi.
-    dialogs = await client.getDialogs({ limit: 0 });
+    // limit: 0 ba'zi GramJS versiyalarida barqaror ishlamasligi mumkin,
+    // shuning uchun ishonchli katta son beramiz — kutubxona buni ichida
+    // avtomatik sahifalab (pagination) hammasini olib keladi.
+    dialogs = await client.getDialogs({ limit: 1000 });
   } finally {
     try { await client.disconnect(); } catch {}
   }
@@ -111,16 +111,12 @@ async function syncGroupsFromAccount(userId, account) {
   const chatDialogs = dialogs.filter(d => d.isGroup || d.isChannel);
 
   const syncedIds = [];
+  let hadErrors = false;
   for (let i = 0; i < chatDialogs.length; i++) {
     const d = chatDialogs[i];
     try {
-      // Ba'zi dialoglarda id/entity to'liq bo'lmasligi mumkin (masalan,
-      // o'chirilgan yoki kirish cheklangan chatlar). Bunday elementni
-      // o'tkazib yuborish kerak, aks holda butun sinxronlash to'xtab qolib,
-      // hech qanday guruh saqlanmay qolardi.
-      if (!d.id) continue;
-
-      const groupId = d.id.toString();
+      const groupId = String(d.id);
+      if (!groupId) throw new Error('groupId aniqlanmadi');
       const groupName = d.title || 'Nomsiz guruh';
       syncedIds.push(groupId);
 
@@ -133,14 +129,21 @@ async function syncGroupsFromAccount(userId, account) {
         { upsert: true }
       );
     } catch (err) {
+      hadErrors = true;
       console.error('[guruhlar] dialog sinxronlashda xato, o\'tkazib yuborildi:', err.message);
     }
   }
 
-  console.log(`[guruhlar] sync: ${syncedIds.length} ta guruh/kanal topildi (userId: ${userId})`);
+  console.log(`[guruhlar] sync: ${syncedIds.length}/${chatDialogs.length} ta guruh/kanal saqlandi (userId: ${userId})`);
 
-  // Akkaunt endi a'zo bo'lmagan guruhlarni ro'yxatdan olib tashlaymiz
-  await Group.deleteMany({ userId, groupId: { $nin: syncedIds } });
+  // Akkaunt endi a'zo bo'lmagan guruhlarni ro'yxatdan olib tashlaymiz.
+  // MUHIM: agar sinxronlashda xatolar bo'lgan bo'lsa (ba'zi guruhlar
+  // o'qilmagan bo'lishi mumkin), tozalashni o'tkazib yuboramiz — aks holda
+  // haqiqatda mavjud, lekin vaqtincha o'qib bo'lmagan guruhlar bazadan
+  // noto'g'ri o'chirilib ketishi mumkin edi.
+  if (!hadErrors) {
+    await Group.deleteMany({ userId, groupId: { $nin: syncedIds } });
+  }
 
   return Group.find({ userId }).sort({ order: 1 });
 }
