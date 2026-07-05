@@ -60,13 +60,17 @@ const addAccountScene = new Scenes.WizardScene(
 
       await client.connect();
 
+      // forceSMS: false — GramJS "forceSMS: true" bo'lsa ichkarida avtomatik
+      // auth.ResendCode chaqiradi va ba'zi raqamlarda shu resend
+      // "406: SEND_CODE_UNAVAILABLE" bilan tushib qoladi. Shu sabab Telegram
+      // o'zi tanlagan standart usulda (odatda ilova ichidan) yuboramiz.
       const result = await client.sendCode(
         { apiId: API_ID, apiHash: API_HASH },
         phone,
-        true // forceSMS: kodni SMS orqali yuborishga majburlaydi
+        false
       );
 
-      console.log(`[addAccount] Kod yuborildi -> phone: ${phone}, type: ${result.type?.className || 'unknown'}`);
+      console.log(`[addAccount] Kod yuborildi -> phone: ${phone}, viaApp: ${result.isCodeViaApp}`);
 
       pendingClients.set(userId, {
         client,
@@ -78,7 +82,10 @@ const addAccountScene = new Scenes.WizardScene(
 
       await ctx.reply(
         '✅ Kod yuborildi!\n\n' +
-        'Telegramdan kelgan *5 xonali kodni* kiriting:',
+        (result.isCodeViaApp
+          ? '📩 Kod *Telegram ilovangizga* (Xabarlar/Telegram xizmat chati) keldi.\n\n'
+          : '📩 Kod *SMS orqali* keldi.\n\n') +
+        'Kelgan *5 xonali kodni* kiriting:',
         { parse_mode: 'Markdown' }
       );
       return ctx.wizard.next();
@@ -86,11 +93,16 @@ const addAccountScene = new Scenes.WizardScene(
     } catch (err) {
       console.error('[addAccount] sendCode:', err.message);
       try { await ctx.telegram.deleteMessage(ctx.chat.id, loadingMsg.message_id); } catch {}
+      try { await client.disconnect(); } catch {}
 
       let msg = `❌ Xatolik: ${err.message}`; // vaqtincha: aniq xatoni ko'rsatamiz (debug uchun)
       if (err.message.includes('PHONE_NUMBER_INVALID')) msg = '❌ Telefon raqam noto\'g\'ri!';
       if (err.message.includes('PHONE_NUMBER_BANNED'))  msg = '❌ Bu raqam ban yegan!';
       if (err.message.includes('API_ID_INVALID'))       msg = '❌ API sozlamalarida xato. Adminga murojaat qiling.';
+      if (err.message.includes('SEND_CODE_UNAVAILABLE')) {
+        msg = '❌ Bu raqamga hozir kod yuborib bo\'lmadi (Telegram vaqtincha rad etdi).\n\n' +
+              'Bir necha daqiqadan so\'ng qayta urinib ko\'ring, yoki boshqa raqam bilan sinab ko\'ring.';
+      }
       if (err.message.includes('FLOOD_WAIT')) {
         const seconds = err.message.match(/FLOOD_WAIT_(\d+)/)?.[1] || '?';
         msg = `⏳ Juda ko'p urinish qildingiz. Telegram ${seconds} soniyaga bloklagan. Shuncha vaqtdan keyin qayta urinib ko'ring.`;
