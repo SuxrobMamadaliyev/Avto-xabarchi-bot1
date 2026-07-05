@@ -4,13 +4,12 @@ const Account = require('./Account');
 const User    = require('./User');
 
 function getMsgSettings() { return require('./habarMatni').MsgSettings; }
-function getGroup()       { return require('./guruhlar').Group; }
+function fetchLiveGroups() { return require('./guruhlar').fetchLiveGroups; }
 
 const activeTimers = new Map();
 
 async function sendToGroups(userId, bot) {
   const MsgSettings = getMsgSettings();
-  const Group       = getGroup();
 
   const [user, account, msg] = await Promise.all([
     User.findOne({ userId }),
@@ -21,31 +20,53 @@ async function sendToGroups(userId, bot) {
   if (!user?.isRunning) return false;
 
   if (!account) {
-    await bot.telegram.sendMessage(userId, '❌ *Akkaunt topilmadi!*\nAutohabar to\'xtatildi.', { parse_mode: 'Markdown' });
+    await bot.telegram.sendMessage(userId,
+      '❌ *Akkaunt topilmadi!*\nAutohabar to\'xtatildi.',
+      { parse_mode: 'Markdown' }
+    );
     await User.findOneAndUpdate({ userId }, { isRunning: false });
     return false;
   }
+
   if (!msg?.text) {
-    await bot.telegram.sendMessage(userId, '❌ *Habar matni yo\'q!*\n✏️ Habar matnini kiriting.', { parse_mode: 'Markdown' });
+    await bot.telegram.sendMessage(userId,
+      '❌ *Habar matni yo\'q!*\n✏️ Habar matnini kiriting.',
+      { parse_mode: 'Markdown' }
+    );
     await User.findOneAndUpdate({ userId }, { isRunning: false });
     return false;
   }
 
-  const accountId   = account._id.toString();
-  const groupMode   = user.groupMode || 'all';
-  // BUG FIX: accountId bo'yicha scope — faqat shu akkauntning guruhlarini oladi
-  const query = groupMode === 'all'
-    ? { userId, accountId }
-    : { userId, accountId, selected: true };
+  // ─── Guruhlarni aniqlash ───────────────────────────────────────────────────
+  let targets = []; // [{ groupId, groupName }]
 
-  const groups = await Group.find(query);
+  const groupMode = user.groupMode || 'all';
 
-  if (!groups.length) {
-    await bot.telegram.sendMessage(userId, '⚠️ *Guruh topilmadi!*\n💬 Guruhlarni sozlab qayta bosing.', { parse_mode: 'Markdown' });
+  if (groupMode === 'selected') {
+    // Faqat tanlangan IDlar — MongoDB ga urmasdan to'g'ridan-to'g'ri yuboramiz
+    targets = (user.selectedGroups || []).map(id => ({ groupId: id, groupName: id }));
+  } else {
+    // Hamma guruhlar — GramJS dan live olamiz
+    try {
+      const getLive = fetchLiveGroups();
+      targets = await getLive(account);
+    } catch (err) {
+      console.error('[sender] live guruhlar olinmadi:', err.message);
+      // Fallback: selectedGroups ishlatamiz
+      targets = (user.selectedGroups || []).map(id => ({ groupId: id, groupName: id }));
+    }
+  }
+
+  if (!targets.length) {
+    await bot.telegram.sendMessage(userId,
+      '⚠️ *Guruh topilmadi!*\n💬 Guruhlarni sozlab qayta bosing.',
+      { parse_mode: 'Markdown' }
+    );
     await User.findOneAndUpdate({ userId }, { isRunning: false });
     return false;
   }
 
+  // ─── GramJS client ────────────────────────────────────────────────────────
   const client = new TelegramClient(
     new StringSession(account.session),
     account.apiId,
@@ -60,14 +81,15 @@ async function sendToGroups(userId, bot) {
     await client.connect();
     connected = true;
 
-    for (const group of groups) {
-      const stillRunning = await User.findOne({ userId }, 'isRunning').lean();
-      if (!stillRunning?.isRunning) break;
+    for (const group of targets) {
+      // Har qadam oldida isRunning tekshiramiz
+      const still = await User.findOne({ userId }, 'isRunning').lean();
+      if (!still?.isRunning) break;
 
       try {
-        const targetId = group.groupId.startsWith('@')
-          ? group.groupId
-          : Number(group.groupId);
+        const targetId = group.groupId.startsWith('-') || /^\d/.test(group.groupId)
+          ? BigInt(group.groupId)   // raqamli ID — BigInt sifatida
+          : group.groupId;          // @username
 
         await client.sendMessage(targetId, { message: msg.text });
         sent++;
@@ -77,7 +99,7 @@ async function sendToGroups(userId, bot) {
         console.error(`[sender] ❌ ${group.groupName}: ${err.message}`);
       }
 
-      await sleep(1500);
+      await sleep(1500); // spam himoyasi
     }
   } finally {
     if (connected) { try { await client.disconnect(); } catch {} }
@@ -87,24 +109,26 @@ async function sendToGroups(userId, bot) {
   return true;
 }
 
+// ─── Scheduler ────────────────────────────────────────────────────────────────
 async function scheduleNext(userId, bot) {
   if (!activeTimers.has(userId)) return;
+
   const ok = await sendToGroups(userId, bot);
   if (!ok) { activeTimers.delete(userId); return; }
 
   const user = await User.findOne({ userId }, 'interval isRunning').lean();
   if (!user?.isRunning) { activeTimers.delete(userId); return; }
 
-  const ms      = (user.interval || 300) * 1000;
-  const timerId = setTimeout(() => scheduleNext(userId, bot), ms);
-  activeTimers.set(userId, timerId);
+  const ms = (user.interval || 300) * 1000;
+  const t  = setTimeout(() => scheduleNext(userId, bot), ms);
+  activeTimers.set(userId, t);
 }
 
 async function startAutoSend(userId, bot) {
   stopAutoSend(userId);
   await User.findOneAndUpdate({ userId }, { isRunning: true }, { upsert: true });
   activeTimers.set(userId, null);
-  await scheduleNext(userId, bot);
+  scheduleNext(userId, bot); // async, kutmaymiz
 }
 
 async function stopAutoSend(userId) {
