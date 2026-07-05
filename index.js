@@ -70,28 +70,42 @@ function mainMenuKeyboard() {
   ]).resize();
 }
 
+// MarkdownV2 uchun maxsus belgilarni ekranlash.
+// BUG FIX: oldin ctx.from.first_name to'g'ridan-to'g'ri Markdown matn ichiga
+// qo'yilardi. Agar odamning ismida _ * [ ] ( ) va h.k. belgilar bo'lsa,
+// Telegram ularni formatlash buyrug'i deb tushunib, butun xabarni
+// chalkashtirib yuborardi ("Salom, .hhuczgjzf..." kabi chiqishlar shundan).
+function escapeMdV2(text) {
+  return String(text ?? '').replace(/[_*[\]()~`>#+\-=|{}.!\\]/g, '\\$&');
+}
+
 async function showMainMenu(ctx) {
   const acc = await Account.findOne({ userId: ctx.from.id, isActive: true });
   const user = await User.findOne({ userId: ctx.from.id });
   const interval = user?.interval || 300;
   const intervalMin = interval / 60;
 
+  const safeName = escapeMdV2(ctx.from.first_name);
+
+  // ">" bilan boshlangan qatorlar MarkdownV2'da "quote block" (chapdan
+  // chiziq bilan ajratilgan blok) sifatida chiqadi — rasmdagi ko'rinishga
+  // mos keladi.
   const menuText =
-    `◈ *AUTO HABAR PRO*\n` +
+    `◇ *AUTO HABAR PRO*\n` +
     `${'─'.repeat(30)}\n\n` +
-    `Salom, ${ctx.from.first_name} 👋\n\n` +
-    `› Akkaunt qo'shing\n` +
-    `› Guruhlarni sozlang\n` +
-    `› Habarni sozlang\n` +
-    `› Autohabarni ishga tushuring`;
+    `Salom, ${safeName} 👋\n\n` +
+    `>› Akkaunt qo'shing\n` +
+    `>› Guruhlarni sozlang\n` +
+    `>› Habarni sozlang\n` +
+    `>› Autohabarni ishga tushuring`;
 
   await ctx.reply(menuText, {
-    parse_mode: 'Markdown',
+    parse_mode: 'MarkdownV2',
     ...mainMenuKeyboard()
   });
 
   const statusText =
-    `👤 *Ulangan:* ${acc ? `\`${acc.phone}\`` : 'Yo\'q'}\n\n` +
+    `👤 *Ulangan:* ${acc ? `\`${escapeMdV2(acc.phone)}\`` : 'Yo\'q'}\n\n` +
     `🤖 Auto Habar: ❌ O'chiq\n` +
     `⭐ Sizning Tarifingiz: 💙 *Bepul*\n` +
     `⏱ Interval: ${intervalMin} daqiqa\n\n` +
