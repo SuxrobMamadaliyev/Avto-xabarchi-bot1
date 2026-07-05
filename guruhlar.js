@@ -14,15 +14,14 @@ async function fetchLiveGroups(account) {
     new StringSession(account.session),
     account.apiId,
     account.apiHash,
-    { connectionRetries: 3 }
+    { connectionRetries: 2 }
   );
 
-  const dialogs = [];
+  let dialogs = [];
   try {
     await client.connect();
-    for await (const d of client.iterDialogs()) {
-      dialogs.push(d);
-    }
+    // getDialogs bir so'rovda keladi — iterDialogs dan 10-20x tez
+    dialogs = await client.getDialogs({ limit: 200 });
   } finally {
     try { await client.disconnect(); } catch {}
   }
