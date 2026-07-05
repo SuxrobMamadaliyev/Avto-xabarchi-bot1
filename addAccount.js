@@ -4,18 +4,21 @@ const { StringSession } = require('telegram/sessions');
 const { Api } = require('telegram');
 const Account = require('./Account');
 
-// Vaqtinchalik client saqlash (scene davomida)
+const API_ID   = parseInt(process.env.API_ID);
+const API_HASH = process.env.API_HASH;
+
+// Vaqtinchalik clientlar (scene davomida)
 const pendingClients = new Map();
 
 const addAccountScene = new Scenes.WizardScene(
   'ADD_ACCOUNT',
 
-  // ── STEP 1: API ID so'rash ────────────────────────────────────────────────
+  // ── STEP 1: Telefon raqam so'rash ─────────────────────────────────────────
   async (ctx) => {
     await ctx.reply(
-      '📲 *Akkaunt qo\'shish*\n\n' +
-      '*1-qadam:* API ID kiriting\n\n' +
-      '🔗 [my.telegram.org](https://my.telegram.org) → API development tools',
+      '📲 *Akkaunt ulash*\n\n' +
+      'Telefon raqamingizni kiriting:\n\n' +
+      'Masalan: `+998901234567`',
       {
         parse_mode: 'Markdown',
         ...Markup.inlineKeyboard([
@@ -26,57 +29,7 @@ const addAccountScene = new Scenes.WizardScene(
     return ctx.wizard.next();
   },
 
-  // ── STEP 2: API Hash so'rash ─────────────────────────────────────────────
-  async (ctx) => {
-    if (ctx.callbackQuery?.data === 'cancel_add') {
-      await ctx.answerCbQuery();
-      await ctx.reply('❌ Bekor qilindi');
-      return ctx.scene.leave();
-    }
-
-    const apiId = ctx.message?.text?.trim();
-    if (!apiId || isNaN(apiId) || parseInt(apiId) <= 0) {
-      await ctx.reply('⚠️ Noto\'g\'ri format. Faqat son kiriting:\nMasalan: `12345678`', {
-        parse_mode: 'Markdown'
-      });
-      return;
-    }
-
-    ctx.wizard.state.apiId = parseInt(apiId);
-
-    await ctx.reply(
-      '*2-qadam:* API Hash kiriting\n\n' +
-      '_(my.telegram.org dan olingan hash)_',
-      { parse_mode: 'Markdown' }
-    );
-    return ctx.wizard.next();
-  },
-
-  // ── STEP 3: Telefon raqam so'rash ────────────────────────────────────────
-  async (ctx) => {
-    if (ctx.callbackQuery?.data === 'cancel_add') {
-      await ctx.answerCbQuery();
-      await ctx.reply('❌ Bekor qilindi');
-      return ctx.scene.leave();
-    }
-
-    const apiHash = ctx.message?.text?.trim();
-    if (!apiHash || apiHash.length < 20) {
-      await ctx.reply('⚠️ API Hash noto\'g\'ri. Qayta kiriting:');
-      return;
-    }
-
-    ctx.wizard.state.apiHash = apiHash;
-
-    await ctx.reply(
-      '*3-qadam:* Telefon raqamingizni kiriting\n\n' +
-      'Masalan: `+998901234567`',
-      { parse_mode: 'Markdown' }
-    );
-    return ctx.wizard.next();
-  },
-
-  // ── STEP 4: Telefon jo'natish va OTP so'rash ─────────────────────────────
+  // ── STEP 2: Kodni yuborish ────────────────────────────────────────────────
   async (ctx) => {
     if (ctx.callbackQuery?.data === 'cancel_add') {
       await ctx.answerCbQuery();
@@ -86,75 +39,62 @@ const addAccountScene = new Scenes.WizardScene(
 
     const phone = ctx.message?.text?.trim();
     if (!phone || !phone.startsWith('+') || phone.length < 10) {
-      await ctx.reply(
-        '⚠️ Telefon raqam noto\'g\'ri.\n' +
-        'Masalan: `+998901234567`',
-        { parse_mode: 'Markdown' }
-      );
+      await ctx.reply('⚠️ Telefon raqamni + bilan kiriting:\nMasalan: `+998901234567`', {
+        parse_mode: 'Markdown'
+      });
       return;
     }
 
     ctx.wizard.state.phone = phone;
-    const { apiId, apiHash } = ctx.wizard.state;
     const userId = ctx.from.id;
 
-    const loadingMsg = await ctx.reply('⏳ Telegram-ga ulanilmoqda...');
+    const loadingMsg = await ctx.reply('⏳ Ulanilmoqda...');
 
     try {
       const client = new TelegramClient(
         new StringSession(''),
-        apiId,
-        apiHash,
-        {
-          connectionRetries: 5,
-          useWSS: false,
-        }
+        API_ID,
+        API_HASH,
+        { connectionRetries: 5 }
       );
 
       await client.connect();
 
-      const result = await client.sendCode({ apiId, apiHash }, phone);
+      const result = await client.sendCode(
+        { apiId: API_ID, apiHash: API_HASH },
+        phone
+      );
 
       pendingClients.set(userId, {
         client,
         phoneCodeHash: result.phoneCodeHash,
-        apiId,
-        apiHash,
         phone
       });
 
-      try {
-        await ctx.telegram.deleteMessage(ctx.chat.id, loadingMsg.message_id);
-      } catch {}
+      try { await ctx.telegram.deleteMessage(ctx.chat.id, loadingMsg.message_id); } catch {}
 
       await ctx.reply(
-        '✅ Tasdiqlash kodi yuborildi!\n\n' +
-        '*4-qadam:* Telegramdan kelgan *5 xonali kodni* kiriting:\n\n' +
-        '💡 Agar kod `12345` bo\'lsa, shunday yozing: `1 2 3 4 5` yoki `12345`',
+        '✅ Kod yuborildi!\n\n' +
+        'Telegramdan kelgan *5 xonali kodni* kiriting:',
         { parse_mode: 'Markdown' }
       );
       return ctx.wizard.next();
 
     } catch (err) {
-      console.error('[addAccount] sendCode error:', err.message);
-      pendingClients.delete(userId);
+      console.error('[addAccount] sendCode:', err.message);
+      try { await ctx.telegram.deleteMessage(ctx.chat.id, loadingMsg.message_id); } catch {}
 
-      try {
-        await ctx.telegram.deleteMessage(ctx.chat.id, loadingMsg.message_id);
-      } catch {}
+      let msg = '❌ Xatolik yuz berdi.';
+      if (err.message.includes('PHONE_NUMBER_INVALID')) msg = '❌ Telefon raqam noto\'g\'ri!';
+      if (err.message.includes('PHONE_NUMBER_BANNED'))  msg = '❌ Bu raqam ban yegan!';
+      if (err.message.includes('API_ID_INVALID'))       msg = '❌ API sozlamalarida xato. Adminga murojaat qiling.';
 
-      let errMsg = '❌ Xatolik yuz berdi.';
-      if (err.message.includes('API_ID_INVALID'))    errMsg = '❌ API ID noto\'g\'ri!';
-      if (err.message.includes('API_ID_PUBLISHED_FLOOD')) errMsg = '❌ Bu API ID bloklangan!';
-      if (err.message.includes('PHONE_NUMBER_INVALID')) errMsg = '❌ Telefon raqam noto\'g\'ri!';
-      if (err.message.includes('PHONE_NUMBER_BANNED')) errMsg = '❌ Bu raqam Telegram-dan ban yegan!';
-
-      await ctx.reply(`${errMsg}\n\n/start bosib qayta boshlang`);
+      await ctx.reply(msg);
       return ctx.scene.leave();
     }
   },
 
-  // ── STEP 5: OTP tekshirish ───────────────────────────────────────────────
+  // ── STEP 3: OTP tekshirish ────────────────────────────────────────────────
   async (ctx) => {
     if (ctx.callbackQuery?.data === 'cancel_add') {
       await ctx.answerCbQuery();
@@ -173,12 +113,12 @@ const addAccountScene = new Scenes.WizardScene(
     }
 
     if (!code || !/^\d{5,6}$/.test(code)) {
-      await ctx.reply('⚠️ Kod 5-6 ta raqamdan iborat bo\'lishi kerak. Qayta kiriting:');
+      await ctx.reply('⚠️ Kod 5-6 ta raqamdan iborat. Qayta kiriting:');
       return;
     }
 
     try {
-      const { client, phoneCodeHash, phone, apiId, apiHash } = pending;
+      const { client, phoneCodeHash, phone } = pending;
 
       await client.invoke(
         new Api.auth.SignIn({
@@ -188,39 +128,36 @@ const addAccountScene = new Scenes.WizardScene(
         })
       );
 
-      await saveAccount(ctx, client, pending);
+      await saveAccount(ctx, client, phone);
       return ctx.scene.leave();
 
     } catch (err) {
-      console.error('[addAccount] signIn error:', err.message);
+      console.error('[addAccount] signIn:', err.message);
 
       if (err.message.includes('SESSION_PASSWORD_NEEDED')) {
         await ctx.reply(
-          '🔐 *2 bosqichli tasdiqlash (2FA) yoqilgan!*\n\n' +
-          '*5-qadam:* Telegram parolингизни kiriting:',
+          '🔐 *2FA parol yoqilgan!*\n\nTelegram parolингизни kiriting:',
           { parse_mode: 'Markdown' }
         );
         return ctx.wizard.next();
       }
-
       if (err.message.includes('PHONE_CODE_INVALID')) {
         await ctx.reply('❌ Noto\'g\'ri kod! Qayta kiriting:');
         return;
       }
-
       if (err.message.includes('PHONE_CODE_EXPIRED')) {
         pendingClients.delete(userId);
-        await ctx.reply('❌ Kod muddati o\'tib ketdi. /start bosib qayta boshlang.');
+        await ctx.reply('❌ Kod muddati o\'tdi. Qayta boshlang.');
         return ctx.scene.leave();
       }
 
       pendingClients.delete(userId);
-      await ctx.reply(`❌ Xatolik: ${err.message}\n\n/start bosib qayta boshlang`);
+      await ctx.reply(`❌ Xatolik: ${err.message}`);
       return ctx.scene.leave();
     }
   },
 
-  // ── STEP 6: 2FA parol ────────────────────────────────────────────────────
+  // ── STEP 4: 2FA parol ─────────────────────────────────────────────────────
   async (ctx) => {
     if (ctx.callbackQuery?.data === 'cancel_add') {
       await ctx.answerCbQuery();
@@ -234,79 +171,63 @@ const addAccountScene = new Scenes.WizardScene(
     const pending = pendingClients.get(userId);
 
     if (!pending) {
-      await ctx.reply('❌ Session topilmadi. /start bosib qayta boshlang.');
+      await ctx.reply('❌ Session topilmadi.');
       return ctx.scene.leave();
     }
 
-    if (!password) {
-      await ctx.reply('⚠️ Parol bo\'sh bo\'lishi mumkin emas. Qayta kiriting:');
-      return;
-    }
-
     try {
-      const { client, apiId, apiHash } = pending;
+      const { client, phone } = pending;
 
       await client.signInWithPassword(
-        { apiId, apiHash },
+        { apiId: API_ID, apiHash: API_HASH },
         {
           password: async () => password,
           onError: async (err) => { throw err; }
         }
       );
 
-      await saveAccount(ctx, client, pending);
+      await saveAccount(ctx, client, phone);
       return ctx.scene.leave();
 
     } catch (err) {
-      console.error('[addAccount] 2FA error:', err.message);
-
+      console.error('[addAccount] 2FA:', err.message);
       if (err.message.includes('PASSWORD_HASH_INVALID')) {
         await ctx.reply('❌ Noto\'g\'ri parol! Qayta kiriting:');
         return;
       }
-
       pendingClients.delete(ctx.from.id);
-      await ctx.reply(`❌ Xatolik: ${err.message}\n\n/start bosib qayta boshlang`);
+      await ctx.reply(`❌ Xatolik: ${err.message}`);
       return ctx.scene.leave();
     }
   }
 );
 
-// ── Helper: Akkauntni saqlash ─────────────────────────────────────────────────
-async function saveAccount(ctx, client, pending) {
-  const { phone, apiId, apiHash } = pending;
+// ── Session saqlash ───────────────────────────────────────────────────────────
+async function saveAccount(ctx, client, phone) {
   const userId = ctx.from.id;
-
   const sessionString = client.session.save();
   await client.disconnect();
   pendingClients.delete(userId);
 
-  try {
-    await Account.findOneAndUpdate(
-      { userId, phone },
-      { userId, phone, apiId, apiHash, session: sessionString, isActive: true },
-      { upsert: true, new: true }
-    );
+  await Account.findOneAndUpdate(
+    { userId, phone },
+    { userId, phone, apiId: API_ID, apiHash: API_HASH, session: sessionString, isActive: true },
+    { upsert: true, new: true }
+  );
 
-    await ctx.reply(
-      '✅ *Akkaunt muvaffaqiyatli qo\'shildi!*\n\n' +
-      `📱 Telefon: \`${phone}\`\n` +
-      '🟢 Holat: Faol\n' +
-      '💾 Session: MongoDB-ga saqlandi',
-      {
-        parse_mode: 'Markdown',
-        ...Markup.inlineKeyboard([
-          [Markup.button.callback('🏠 Bosh menyuga', 'main_menu')]
-        ])
-      }
-    );
-  } catch (err) {
-    console.error('[addAccount] saveAccount error:', err.message);
-    await ctx.reply('❌ Saqlashda xatolik. Qayta urinib ko\'ring.');
-  }
+  await ctx.reply(
+    '✅ *Akkaunt muvaffaqiyatli ulandi!*\n\n' +
+    `📱 Telefon: \`${phone}\`\n` +
+    '🟢 Holat: Faol',
+    {
+      parse_mode: 'Markdown',
+      ...Markup.inlineKeyboard([
+        [Markup.button.callback('🏠 Bosh menyuga', 'main_menu')]
+      ])
+    }
+  );
 }
 
-// Callback: bekor qilish
 addAccountScene.action('cancel_add', async (ctx) => {
   await ctx.answerCbQuery();
   pendingClients.delete(ctx.from.id);
