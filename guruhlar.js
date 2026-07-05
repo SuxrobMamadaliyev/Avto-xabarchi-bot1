@@ -1,20 +1,25 @@
 const { Markup } = require('telegraf');
 const { Scenes } = require('telegraf');
 const mongoose = require('mongoose');
+const { TelegramClient } = require('telegram');
+const { StringSession } = require('telegram/sessions');
 
-// Group model (inline)
+const Account = require('./Account');
+const User = require('./User');
+
+const PAGE_SIZE = 20; // 10 qator x 2 ustun (rasmdagidek)
+
+// ─── Group model (inline) ───────────────────────────────────────────────────
 const groupSchema = new mongoose.Schema({
   userId:    { type: Number, required: true },
   groupId:   { type: String, required: true },
   groupName: { type: String, required: true },
   selected:  { type: Boolean, default: true },
+  order:     { type: Number, default: 0 },
   addedAt:   { type: Date, default: Date.now }
 });
 groupSchema.index({ userId: 1, groupId: 1 }, { unique: true });
 const Group = mongoose.models.Group || mongoose.model('Group', groupSchema);
-
-// User settings model uchun
-const User = require('./User');
 
 // ─── Guruhlarni sozlash asosiy menyu ────────────────────────────────────────
 async function guruhlarHandler(ctx) {
@@ -69,7 +74,7 @@ async function groupModeAllAction(ctx) {
   );
 }
 
-// O'zim tanlayman — guruhlar ro'yxati
+// O'zim tanlayman — ulangan akkauntdagi guruhlar ro'yxati
 async function groupModeSelectAction(ctx) {
   await ctx.answerCbQuery();
   await User.findOneAndUpdate(
@@ -78,79 +83,209 @@ async function groupModeSelectAction(ctx) {
     { upsert: true }
   );
 
-  await showGroupList(ctx);
+  await showGroupList(ctx, 0);
 }
 
-async function showGroupList(ctx) {
-  const groups = await Group.find({ userId: ctx.from.id });
+// ─── Ulangan akkaunt orqali guruhlarni Telegramdan sinxronlash ──────────────
+async function syncGroupsFromAccount(userId, account) {
+  const client = new TelegramClient(
+    new StringSession(account.session),
+    account.apiId,
+    account.apiHash,
+    { connectionRetries: 3 }
+  );
 
-  if (!groups.length) {
-    await ctx.reply(
-      '📋 *Guruhlar ro\'yxati bo\'sh*\n\n' +
-      'Guruh qo\'shish uchun botingizni guruhga admin qiling,\n' +
-      'keyin bot avtomatik ro\'yxatga oladi.',
-      {
-        parse_mode: 'Markdown',
-        ...Markup.inlineKeyboard([
-          [Markup.button.callback('➕ Guruh ID qo\'shish', 'add_group_manual')],
-          [Markup.button.callback('⬅️ Orqaga', 'guruhlar_menu')]
-        ])
-      }
-    );
-    return;
+  await client.connect();
+
+  let dialogs;
+  try {
+    dialogs = await client.getDialogs({ limit: 200 });
+  } finally {
+    try { await client.disconnect(); } catch {}
   }
 
-  const buttons = groups.map(g => [
-    Markup.button.callback(
-      `${g.selected ? '✔️' : '➕'} ${g.groupName}`,
-      `toggle_group_${g._id}`
-    )
+  // Faqat guruh va kanallar (shaxsiy chatlar/botlar chiqarib tashlanadi)
+  const chatDialogs = dialogs.filter(d => d.isGroup || d.isChannel);
+
+  const syncedIds = [];
+  for (let i = 0; i < chatDialogs.length; i++) {
+    const d = chatDialogs[i];
+    const groupId = d.id.toString();
+    const groupName = d.title || 'Nomsiz guruh';
+    syncedIds.push(groupId);
+
+    await Group.findOneAndUpdate(
+      { userId, groupId },
+      {
+        $set: { userId, groupId, groupName, order: i },
+        $setOnInsert: { selected: true }
+      },
+      { upsert: true }
+    );
+  }
+
+  // Akkaunt endi a'zo bo'lmagan guruhlarni ro'yxatdan olib tashlaymiz
+  await Group.deleteMany({ userId, groupId: { $nin: syncedIds } });
+
+  return Group.find({ userId }).sort({ order: 1 });
+}
+
+// ─── Sahifalangan guruhlar ro'yxatini chizish ───────────────────────────────
+async function showGroupList(ctx, page = 0, { forceSync = false, edit = false } = {}) {
+  const userId = ctx.from.id;
+  const account = await Account.findOne({ userId, isActive: true });
+
+  if (!account) {
+    const text =
+      '⚠️ *Avval akkaunt ulang!*\n\n' +
+      'Guruhlaringizni ko\'rish uchun avval Telegram akkauntingizni ulashingiz kerak.';
+    const kb = Markup.inlineKeyboard([
+      [Markup.button.callback('➕ Akkaunt qo\'shish', 'add_account')],
+      [Markup.button.callback('⬅️ Orqaga', 'guruhlar_menu')]
+    ]);
+    if (edit) return ctx.editMessageText(text, { parse_mode: 'Markdown', ...kb });
+    return ctx.reply(text, { parse_mode: 'Markdown', ...kb });
+  }
+
+  let groups = await Group.find({ userId }).sort({ order: 1 });
+
+  if (forceSync || groups.length === 0) {
+    const loading = edit ? null : await ctx.reply('⏳ Guruhlar yuklanmoqda...');
+    try {
+      groups = await syncGroupsFromAccount(userId, account);
+    } catch (err) {
+      console.error('[guruhlar] sync xato:', err.message);
+      if (loading) { try { await ctx.telegram.deleteMessage(ctx.chat.id, loading.message_id); } catch {} }
+      const text =
+        '❌ *Guruhlarni yuklab bo\'lmadi*\n\n' +
+        'Akkaunt sessiyasi eskirgan bo\'lishi mumkin. Akkauntni qayta ulab ko\'ring.';
+      const kb = Markup.inlineKeyboard([
+        [Markup.button.callback('🔄 Qayta urinish', 'gsy:0')],
+        [Markup.button.callback('⬅️ Orqaga', 'guruhlar_menu')]
+      ]);
+      return ctx.reply(text, { parse_mode: 'Markdown', ...kb });
+    }
+    if (loading) { try { await ctx.telegram.deleteMessage(ctx.chat.id, loading.message_id); } catch {} }
+    page = 0;
+  }
+
+  if (groups.length === 0) {
+    const text =
+      '📋 *Guruhlar topilmadi*\n\n' +
+      'Ulangan akkaunt hech qanday guruh yoki kanalga a\'zo emas.\n' +
+      'Yoki guruh ID sini qo\'lda kiriting.';
+    const kb = Markup.inlineKeyboard([
+      [Markup.button.callback('🔄 Yangilash', 'gsy:0')],
+      [Markup.button.callback('➕ Guruh ID qo\'shish', 'add_group_manual')],
+      [Markup.button.callback('⬅️ Orqaga', 'guruhlar_menu')]
+    ]);
+    if (edit) return ctx.editMessageText(text, { parse_mode: 'Markdown', ...kb });
+    return ctx.reply(text, { parse_mode: 'Markdown', ...kb });
+  }
+
+  const totalCount = groups.length;
+  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
+  page = Math.min(Math.max(0, page), totalPages - 1);
+
+  const selectedCount = groups.filter(g => g.selected).length;
+  const pageItems = groups.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE);
+
+  const text =
+    `Guruhlarni tanlang (${selectedCount} ta)\n` +
+    `Jami: ${totalCount} ta\n` +
+    `➕ Tanlanmagan   ✔️ Tanlangan`;
+
+  const rows = [];
+  for (let i = 0; i < pageItems.length; i += 2) {
+    const row = [buttonFor(pageItems[i], page)];
+    if (pageItems[i + 1]) row.push(buttonFor(pageItems[i + 1], page));
+    rows.push(row);
+  }
+
+  const navRow = [];
+  if (page > 0) navRow.push(Markup.button.callback('⬅️ Oldingi', `gpg:${page - 1}`));
+  if (page < totalPages - 1) navRow.push(Markup.button.callback('Keyingi ➡️', `gpg:${page + 1}`));
+  if (navRow.length) rows.push(navRow);
+
+  rows.push([
+    Markup.button.callback('☑️ Hammasini tanlash', `gsa:${page}`),
+    Markup.button.callback(`💾 Saqlash (${selectedCount} ta)`, `gsv:${page}`)
+  ]);
+  rows.push([
+    Markup.button.callback('🔄 Yangilash', 'gsy:0'),
+    Markup.button.callback('⬅️ Orqaga', 'guruhlar_menu')
   ]);
 
-  buttons.push([Markup.button.callback('➕ Guruh qo\'shish', 'add_group_manual')]);
-  buttons.push([Markup.button.callback('⬅️ Orqaga', 'guruhlar_menu')]);
+  const kb = Markup.inlineKeyboard(rows);
 
-  await ctx.reply(
-    `📋 *Guruhlaringiz:*\n\n` +
-    `✔️ — tanlangan (xabar yuboriladi)\n` +
-    `➕ — tanlanmagan`,
-    {
-      parse_mode: 'Markdown',
-      ...Markup.inlineKeyboard(buttons)
+  if (edit) {
+    try {
+      return await ctx.editMessageText(text, kb);
+    } catch {
+      return ctx.reply(text, kb);
     }
+  }
+  return ctx.reply(text, kb);
+}
+
+function buttonFor(g, page) {
+  const label = truncate(g.groupName, 24);
+  return Markup.button.callback(
+    `${g.selected ? '✔️' : '➕'} ${label}`,
+    `tgl:${g._id}:${page}`
   );
 }
 
-// Guruhni tanlash/bekor qilish
-async function toggleGroupAction(ctx) {
-  await ctx.answerCbQuery();
-  const id = ctx.callbackQuery.data.replace('toggle_group_', '');
+function truncate(str, max) {
+  if (!str) return '';
+  return str.length > max ? str.slice(0, max - 1) + '…' : str;
+}
 
+// Guruhni tanlash/bekor qilish (bitta guruh)
+async function toggleGroupAction(ctx) {
+  const [, id, pageStr] = ctx.callbackQuery.data.split(':');
   const group = await Group.findById(id);
-  if (!group) return;
+  if (!group) return ctx.answerCbQuery('❌ Guruh topilmadi', { show_alert: true });
 
   group.selected = !group.selected;
   await group.save();
 
-  await ctx.answerCbQuery(
-    group.selected ? '✅ Guruh tanlandi' : '❌ Guruh bekor qilindi',
-    { show_alert: false }
-  );
+  await ctx.answerCbQuery(group.selected ? '✅ Tanlandi' : '➕ Bekor qilindi');
+  await showGroupList(ctx, parseInt(pageStr, 10) || 0, { edit: true });
+}
 
-  // Ro'yxatni yangilash
-  const groups = await Group.find({ userId: ctx.from.id });
-  const buttons = groups.map(g => [
-    Markup.button.callback(
-      `${g.selected ? '✔️' : '➕'} ${g.groupName}`,
-      `toggle_group_${g._id}`
-    )
-  ]);
-  buttons.push([Markup.button.callback('➕ Guruh qo\'shish', 'add_group_manual')]);
-  buttons.push([Markup.button.callback('⬅️ Orqaga', 'guruhlar_menu')]);
+// Sahifani almashtirish
+async function groupPageAction(ctx) {
+  await ctx.answerCbQuery();
+  const page = parseInt(ctx.callbackQuery.data.split(':')[1], 10) || 0;
+  await showGroupList(ctx, page, { edit: true });
+}
 
-  await ctx.editMessageReplyMarkup(
-    Markup.inlineKeyboard(buttons).reply_markup
+// Hammasini tanlash (barcha sahifalar bo'yicha)
+async function groupSelectAllAction(ctx) {
+  const page = parseInt(ctx.callbackQuery.data.split(':')[1], 10) || 0;
+  await Group.updateMany({ userId: ctx.from.id }, { selected: true });
+  await ctx.answerCbQuery('✅ Barcha guruhlar tanlandi');
+  await showGroupList(ctx, page, { edit: true });
+}
+
+// Saqlash — tanlovni yakunlash
+async function groupSaveAction(ctx) {
+  const page = parseInt(ctx.callbackQuery.data.split(':')[1], 10) || 0;
+  const selectedCount = await Group.countDocuments({ userId: ctx.from.id, selected: true });
+  await User.findOneAndUpdate(
+    { userId: ctx.from.id },
+    { groupMode: 'selected' },
+    { upsert: true }
   );
+  await ctx.answerCbQuery(`💾 Saqlandi! ${selectedCount} ta guruh tanlangan`, { show_alert: true });
+  await showGroupList(ctx, page, { edit: true });
+}
+
+// Qayta yuklash (akkauntdan yangidan sinxronlash)
+async function groupSyncAction(ctx) {
+  await ctx.answerCbQuery('🔄 Yangilanmoqda...');
+  await showGroupList(ctx, 0, { forceSync: true, edit: false });
 }
 
 // Guruh qo'shish scene (qo'lda ID kiritish)
@@ -196,7 +331,7 @@ const addGroupScene = new Scenes.WizardScene(
 
       await ctx.reply(`✅ *${groupName}* qo'shildi!`, { parse_mode: 'Markdown' });
       await ctx.scene.leave();
-      await showGroupList(ctx);
+      await showGroupList(ctx, 0);
     } catch (err) {
       await ctx.reply('❌ Xatolik. Qayta kiriting:');
     }
@@ -208,7 +343,7 @@ addGroupScene.action('cancel_add_group', async (ctx) => {
   await ctx.scene.leave();
 });
 
-// Bot guruhga qo'shilganda avtomatik saqlash
+// Bot guruhga qo'shilganda avtomatik saqlash (zaxira usul)
 async function onBotAddedToGroup(ctx) {
   if (!ctx.chat || !['group', 'supergroup'].includes(ctx.chat.type)) return;
 
@@ -216,7 +351,6 @@ async function onBotAddedToGroup(ctx) {
   const isAdmin = admins.some(a => a.user.id === ctx.botInfo.id);
   if (!isAdmin) return;
 
-  // Guruhni barcha adminlar uchun saqlash
   for (const admin of admins) {
     if (admin.user.is_bot) continue;
     try {
@@ -239,6 +373,10 @@ module.exports = {
   groupModeAllAction,
   groupModeSelectAction,
   toggleGroupAction,
+  groupPageAction,
+  groupSelectAllAction,
+  groupSaveAction,
+  groupSyncAction,
   addGroupScene,
   onBotAddedToGroup,
   Group
