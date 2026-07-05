@@ -1,0 +1,20 @@
+{
+  "name": "avto-xabarchi",
+  "version": "1.0.0",
+  "description": "Telegram Auto Habar Bot",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.0.3",
+    "mongoose": "^7.0.0",
+    "telegraf": "^4.15.0",
+    "telegram": "^2.19.7",
+    "input": "^1.0.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.0"
+  }
+}
