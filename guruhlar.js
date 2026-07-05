@@ -102,8 +102,8 @@ async function guruhlarHandler(ctx) {
 
     await showGroupList(ctx, 0, { groups, edit: false });
   } catch (err) {
-    console.error('[guruhlar] guruhlarHandler xato:', err.message);
-    ctx.reply('❌ Xato yuz berdi. Qayta urinib ko\'ring.').catch(() => {});
+    console.error('[guruhlar] guruhlarHandler xato:', err);
+    ctx.reply(`❌ Debug xato:\n<code>${err.message}</code>`, { parse_mode: 'HTML' }).catch(() => {});
   }
 }
 
