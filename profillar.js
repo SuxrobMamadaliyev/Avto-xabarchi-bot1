@@ -45,7 +45,7 @@ async function profileDetailAction(ctx) {
   await ctx.answerCbQuery();
   const id = ctx.callbackQuery.data.replace('profile_detail_', '');
 
-  const acc = await Account.findById(id);
+  const acc = await Account.findOne({ _id: id, userId: ctx.from.id });
   if (!acc) {
     return ctx.reply('❌ Profil topilmadi');
   }
@@ -76,7 +76,7 @@ async function profileToggleAction(ctx) {
   await ctx.answerCbQuery();
   const id = ctx.callbackQuery.data.replace('profile_toggle_', '');
 
-  const acc = await Account.findById(id);
+  const acc = await Account.findOne({ _id: id, userId: ctx.from.id });
   if (!acc) return ctx.reply('❌ Topilmadi');
 
   acc.isActive = !acc.isActive;
@@ -94,7 +94,8 @@ async function profileDeleteAction(ctx) {
   await ctx.answerCbQuery();
   const id = ctx.callbackQuery.data.replace('profile_delete_', '');
 
-  await Account.findByIdAndDelete(id);
+  const deleted = await Account.findOneAndDelete({ _id: id, userId: ctx.from.id });
+  if (!deleted) return ctx.answerCbQuery('❌ Topilmadi', { show_alert: true });
   await ctx.answerCbQuery('🗑 Profil o\'chirildi!', { show_alert: true });
 
   // Profillar ro'yxatiga qaytish
