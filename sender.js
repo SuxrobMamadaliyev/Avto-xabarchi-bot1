@@ -150,7 +150,18 @@ async function sendToGroups(userId, bot) {
 
   // ─── Yuborilgan sonini hisoblash (statistika + avto-o'chirish uchun) ──────
   if (sent > 0) {
-    await User.findOneAndUpdate({ userId }, { $inc: { sentCount: sent } });
+    const today = new Date().toISOString().slice(0, 10); // 'YYYY-MM-DD'
+    const fresh = await User.findOne({ userId }, 'todaySentDate').lean();
+
+    if (fresh?.todaySentDate !== today) {
+      // Kun almashgan — kunlik hisoblagichni nolga tushirib, keyin qo'shamiz
+      await User.findOneAndUpdate({ userId }, { todaySentCount: 0, todaySentDate: today });
+    }
+
+    await User.findOneAndUpdate(
+      { userId },
+      { $inc: { sentCount: sent, totalSentCount: sent, todaySentCount: sent } }
+    );
   }
 
   console.log(`[sender] userId:${userId} — ${sent} yuborildi, ${failed} xato`);
