@@ -1,11 +1,5 @@
-const { Markup } = require('telegraf');
+const { iBtn, rawInline } = require('./styledKb');
 const Account = require('./Account');
-
-// ─── Bot API 9.4 (2026-02-09): tugmalarga rang ───────────────────────────────
-function styledButton(text, callback_data, style) {
-  const btn = Markup.button.callback(text, callback_data);
-  return style ? { ...btn, style } : btn;
-}
 
 async function profillarHandler(ctx) {
   const accounts = await Account.find({ userId: ctx.from.id });
@@ -16,46 +10,42 @@ async function profillarHandler(ctx) {
       '❌ Hali hech qanday profil yo\'q.',
       {
         parse_mode: 'Markdown',
-        ...Markup.inlineKeyboard([
-          [styledButton('➕ Yangi profil qo\'shish', 'add_account', 'success')],
-          [styledButton('⬅️ Orqaga', 'main_menu', 'danger')]
+        ...rawInline([
+          [iBtn('➕ Yangi profil qo\'shish', 'add_account', 'success')],
+          [iBtn('⬅️ Orqaga',               'main_menu',    'danger')]
         ])
       }
     );
     return;
   }
 
-  // Akkauntlar ro'yxati
-  const buttons = accounts.map((acc) => [
-    styledButton(
+  const rows = accounts.map((acc) => [
+    iBtn(
       `${acc.isActive ? '🟢' : '🔴'} ${acc.phone}`,
       `profile_detail_${acc._id}`,
       acc.isActive ? 'success' : 'danger'
     )
   ]);
 
-  buttons.push([styledButton('➕ Yangi profil qo\'shish', 'add_account', 'success')]);
-  buttons.push([styledButton('⬅️ Orqaga', 'main_menu', 'danger')]);
+  rows.push([iBtn('➕ Yangi profil qo\'shish', 'add_account', 'success')]);
+  rows.push([iBtn('⬅️ Orqaga',               'main_menu',    'danger')]);
 
   await ctx.reply(
     '👥 *Profillar*\n\n' +
     `Jami: *${accounts.length}* ta akkaunt`,
     {
       parse_mode: 'Markdown',
-      ...Markup.inlineKeyboard(buttons)
+      ...rawInline(rows)
     }
   );
 }
 
-// Profil detail
 async function profileDetailAction(ctx) {
   await ctx.answerCbQuery();
   const id = ctx.callbackQuery.data.replace('profile_detail_', '');
 
   const acc = await Account.findOne({ _id: id, userId: ctx.from.id });
-  if (!acc) {
-    return ctx.reply('❌ Profil topilmadi');
-  }
+  if (!acc) return ctx.reply('❌ Profil topilmadi');
 
   await ctx.editMessageText(
     `👤 *Profil ma'lumotlari*\n\n` +
@@ -64,22 +54,21 @@ async function profileDetailAction(ctx) {
     `📅 Qo'shilgan: ${acc.createdAt.toLocaleDateString('uz-UZ')}`,
     {
       parse_mode: 'Markdown',
-      ...Markup.inlineKeyboard([
+      ...rawInline([
         [
-          styledButton(
+          iBtn(
             acc.isActive ? '🔴 O\'chirish' : '🟢 Yoqish',
             `profile_toggle_${acc._id}`,
             acc.isActive ? 'danger' : 'success'
           )
         ],
-        [styledButton('🗑 O\'chirish', `profile_delete_${acc._id}`, 'danger')],
-        [styledButton('⬅️ Orqaga', 'profillar_menu')]
+        [iBtn('🗑 O\'chirish', `profile_delete_${acc._id}`, 'danger')],
+        [iBtn('⬅️ Orqaga',   'profillar_menu')]
       ])
     }
   );
 }
 
-// Profilni yoqish/o'chirish
 async function profileToggleAction(ctx) {
   await ctx.answerCbQuery();
   const id = ctx.callbackQuery.data.replace('profile_toggle_', '');
@@ -97,7 +86,6 @@ async function profileToggleAction(ctx) {
   await profileDetailAction(ctx);
 }
 
-// Profilni o'chirish
 async function profileDeleteAction(ctx) {
   await ctx.answerCbQuery();
   const id = ctx.callbackQuery.data.replace('profile_delete_', '');
@@ -108,9 +96,7 @@ async function profileDeleteAction(ctx) {
 
   await ctx.editMessageText(
     '🗑 Profil muvaffaqiyatli o\'chirildi.',
-    Markup.inlineKeyboard([
-      [styledButton('⬅️ Profillarga qaytish', 'profillar_menu')]
-    ])
+    rawInline([[iBtn('⬅️ Profillarga qaytish', 'profillar_menu', 'primary')]])
   );
 }
 
