@@ -1,28 +1,27 @@
-const { Markup } = require('telegraf');
 const { Scenes } = require('telegraf');
+const { iBtn, rawInline } = require('./styledKb');
 const User = require('./User');
 
-// Interval variantlari (soniyada)
 const INTERVALS = [
-  { label: '2daq',    value: 120 },
-  { label: '3daq',    value: 180 },
-  { label: '4daq',    value: 240 },
-  { label: '5daq',    value: 300 },
-  { label: '6daq',    value: 360 },
-  { label: '7daq',    value: 420 },
-  { label: '8daq',    value: 480 },
-  { label: '9daq',    value: 540 },
-  { label: '10daq',   value: 600 },
-  { label: '11daq',   value: 660 },
-  { label: '12daq',   value: 720 },
-  { label: '13daq',   value: 780 },
-  { label: '14daq',   value: 840 },
-  { label: '15daq',   value: 900 },
-  { label: '30daq',   value: 1800 },
-  { label: '1 soat',  value: 3600 },
-  { label: '1.5 soat',value: 5400 },
-  { label: '2 soat',  value: 7200 },
-  { label: '3 soat',  value: 10800 },
+  { label: '2daq',     value: 120 },
+  { label: '3daq',     value: 180 },
+  { label: '4daq',     value: 240 },
+  { label: '5daq',     value: 300 },
+  { label: '6daq',     value: 360 },
+  { label: '7daq',     value: 420 },
+  { label: '8daq',     value: 480 },
+  { label: '9daq',     value: 540 },
+  { label: '10daq',    value: 600 },
+  { label: '11daq',    value: 660 },
+  { label: '12daq',    value: 720 },
+  { label: '13daq',    value: 780 },
+  { label: '14daq',    value: 840 },
+  { label: '15daq',    value: 900 },
+  { label: '30daq',    value: 1800 },
+  { label: '1 soat',   value: 3600 },
+  { label: '1.5 soat', value: 5400 },
+  { label: '2 soat',   value: 7200 },
+  { label: '3 soat',   value: 10800 },
 ];
 
 function formatInterval(seconds) {
@@ -31,56 +30,34 @@ function formatInterval(seconds) {
 }
 
 function buildIntervalKeyboard(currentInterval) {
-  // 5 ta qator, har birida 5 ta tugma
   const rows = [];
 
-  // 1-qator: 2-6 daqiqa
-  rows.push(
-    INTERVALS.slice(0, 5).map(i =>
-      Markup.button.callback(
+  // Har bir interval tugmasiga rang: tanlangan = success, qolganlar = primary
+  function mkRow(slice) {
+    return slice.map(i =>
+      iBtn(
         (i.value === currentInterval ? '✔️ ' : '') + i.label,
-        `set_interval_${i.value}`
+        `set_interval_${i.value}`,
+        i.value === currentInterval ? 'success' : 'primary'
       )
-    )
-  );
-  // 2-qator: 7-11 daqiqa
-  rows.push(
-    INTERVALS.slice(5, 10).map(i =>
-      Markup.button.callback(
-        (i.value === currentInterval ? '✔️ ' : '') + i.label,
-        `set_interval_${i.value}`
-      )
-    )
-  );
-  // 3-qator: 12-15 daqiqa
-  rows.push(
-    INTERVALS.slice(10, 14).map(i =>
-      Markup.button.callback(
-        (i.value === currentInterval ? '✔️ ' : '') + i.label,
-        `set_interval_${i.value}`
-      )
-    )
-  );
-  // 4-qator: 30daq, 1 soat, 1.5 soat, 2 soat, 3 soat
-  rows.push(
-    INTERVALS.slice(14).map(i =>
-      Markup.button.callback(
-        (i.value === currentInterval ? '✔️ ' : '') + i.label,
-        `set_interval_${i.value}`
-      )
-    )
-  );
-  // Pastki tugmalar
-  rows.push([Markup.button.callback('❕ Interval nima', 'interval_info')]);
-  rows.push([Markup.button.callback('✍️ Qo\'lda kiritish', 'interval_manual')]);
-  rows.push([Markup.button.callback('⬅️ Orqaga', 'main_menu')]);
+    );
+  }
 
-  return Markup.inlineKeyboard(rows);
+  rows.push(mkRow(INTERVALS.slice(0, 5)));   // 2-6 daqiqa
+  rows.push(mkRow(INTERVALS.slice(5, 10)));  // 7-11 daqiqa
+  rows.push(mkRow(INTERVALS.slice(10, 14))); // 12-15 daqiqa
+  rows.push(mkRow(INTERVALS.slice(14)));     // 30daq – 3soat
+
+  rows.push([iBtn('❕ Interval nima', 'interval_info', 'primary')]);
+  rows.push([iBtn('✍️ Qo\'lda kiritish', 'interval_manual', 'primary')]);
+  rows.push([iBtn('⬅️ Orqaga', 'main_menu')]);
+
+  return rawInline(rows);
 }
 
 async function intervalHandler(ctx) {
   const user = await User.findOne({ userId: ctx.from.id });
-  const current = user?.interval || 300; // default 5 daqiqa
+  const current = user?.interval || 300;
 
   await ctx.reply(
     `⏱ *Habar oraligi*\n\n` +
@@ -93,7 +70,6 @@ async function intervalHandler(ctx) {
   );
 }
 
-// Intervalga bosish
 async function setIntervalAction(ctx) {
   await ctx.answerCbQuery();
   const value = parseInt(ctx.callbackQuery.data.replace('set_interval_', ''));
@@ -115,7 +91,6 @@ async function setIntervalAction(ctx) {
   );
 }
 
-// Interval nima?
 async function intervalInfoAction(ctx) {
   await ctx.answerCbQuery();
   await ctx.reply(
@@ -127,7 +102,6 @@ async function intervalInfoAction(ctx) {
   );
 }
 
-// Qo'lda kiritish scene
 const intervalManualScene = new Scenes.WizardScene(
   'INTERVAL_MANUAL',
 
@@ -139,9 +113,7 @@ const intervalManualScene = new Scenes.WizardScene(
       'Maksimal: 1440 daqiqa (24 soat)',
       {
         parse_mode: 'Markdown',
-        ...Markup.inlineKeyboard([
-          [Markup.button.callback('❌ Bekor qilish', 'cancel_manual')]
-        ])
+        ...rawInline([[iBtn('❌ Bekor qilish', 'cancel_manual', 'danger')]])
       }
     );
     return ctx.wizard.next();
