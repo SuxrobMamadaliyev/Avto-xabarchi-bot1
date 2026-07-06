@@ -10,6 +10,45 @@ const Account = require('./Account');
 
 // ─── Handlers ────────────────────────────────────────────────────────────────
 const addAccountScene = require('./addAccount');
+const { getEffectiveTarif } = require('./addAccount');
+
+// ─── Referral +1, va 15 taga yetganda avto 7 kunlik Pro ──────────────────────
+async function grantReferral(referrerId, ctx) {
+  const REF_GOAL = 15;
+  const updated = await User.findOneAndUpdate(
+    { userId: referrerId },
+    { $inc: { referralCount: 1 } },
+    { new: true }
+  );
+  if (!updated) return;
+
+  try {
+    await ctx.telegram.sendMessage(
+      referrerId,
+      `🎉 Sizning havolangiz orqali yangi foydalanuvchi qo'shildi! (${updated.referralCount}/${REF_GOAL})`
+    );
+  } catch {}
+
+  if (updated.referralCount >= REF_GOAL) {
+    const now  = new Date();
+    const base = (updated.proExpiresAt && updated.proExpiresAt > now) ? updated.proExpiresAt : now;
+    const newExpiry = new Date(base.getTime() + 7 * 24 * 60 * 60 * 1000);
+
+    await User.findOneAndUpdate(
+      { userId: referrerId },
+      { tarif: 'pro', proExpiresAt: newExpiry, referralCount: 0 } // hisoblagich qayta boshlanadi
+    );
+
+    try {
+      await ctx.telegram.sendMessage(
+        referrerId,
+        `🎁 *Tabriklaymiz!* 15 ta do'stingiz obuna bo'ldi!\n\n💎 Sizga *bepul 7 kunlik Pro tarif* berildi!\n📅 Muddat: ${newExpiry.toLocaleDateString('uz-UZ')} gacha`,
+        { parse_mode: 'Markdown' }
+      );
+    } catch {}
+  }
+}
+
 
 const { intervalHandler, setIntervalAction, intervalInfoAction, intervalManualScene } = require('./interval');
 const { guruhlarHandler, groupModeAllAction, groupModeSelectAction, toggleGroupAction, groupPageAction, groupSelectAllAction, groupSaveAction, groupSyncAction, addGroupScene, onBotAddedToGroup } = require('./guruhlar');
@@ -35,6 +74,34 @@ bot.use(stage.middleware());
 mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log('✅ MongoDB ulandi'))
   .catch(err => console.error('❌ MongoDB xato:', err));
+
+// ─── CRON: Pro muddati tugaganlarni Free ga tushirish ────────────────────────
+async function checkExpiredProUsers() {
+  try {
+    const now = new Date();
+    const expired = await User.find({ tarif: 'pro', proExpiresAt: { $lt: now } });
+
+    for (const user of expired) {
+      await User.findOneAndUpdate({ userId: user.userId }, { tarif: 'free' });
+      console.log(`[cron] userId:${user.userId} Pro muddati tugadi → Free`);
+      try {
+        await bot.telegram.sendMessage(
+          user.userId,
+          '⏰ *Pro tarif muddati tugadi!*\n\nSiz Free tarifga o\'tkazildingiz.\nDavom etish uchun qayta faollashtiring: 👑 Pro tarif',
+          { parse_mode: 'Markdown' }
+        );
+      } catch {}
+    }
+
+    if (expired.length) console.log(`[cron] ${expired.length} ta foydalanuvchi Free ga tushirildi`);
+  } catch (err) {
+    console.error('[cron] xato:', err.message);
+  }
+}
+// Har soatda tekshiradi
+setInterval(checkExpiredProUsers, 60 * 60 * 1000);
+// Bot ishga tushganda ham darhol bir marta tekshiradi
+setTimeout(checkExpiredProUsers, 10 * 1000);
 
 // ─── MAJBURIY OBUNA ───────────────────────────────────────────────────────────
 const CHANNELS = process.env.CHANNELS
@@ -124,11 +191,30 @@ async function showMainMenu(ctx) {
 bot.start(async (ctx) => {
   if (!['private'].includes(ctx.chat.type)) return;
 
+  const userId    = ctx.from.id;
+  const isNewUser = !(await User.findOne({ userId }));
+
   await User.findOneAndUpdate(
-    { userId: ctx.from.id },
-    { userId: ctx.from.id, username: ctx.from.username, firstName: ctx.from.first_name, lastSeen: new Date() },
+    { userId },
+    { userId, username: ctx.from.username, firstName: ctx.from.first_name, lastSeen: new Date() },
     { upsert: true }
   );
+
+  // ─── Referral: /start ref_<referrerId>_<...> ───────────────────────────────
+  const payload = ctx.startPayload; // masalan "ref_123456789_0"
+  if (isNewUser && payload?.startsWith('ref_')) {
+    const referrerId = parseInt(payload.split('_')[1], 10);
+    if (referrerId && referrerId !== userId) {
+      const already = await User.findOne({ userId });
+      if (!already?.referredBy) {
+        await User.findOneAndUpdate({ userId }, { referredBy: referrerId });
+        // Referral hisoblanishi uchun taklif qilingan foydalanuvchi obunani tasdiqlashi kerak —
+        // shuning uchun hozircha faqat referredBy saqlanadi, checkSubscription dan keyin +1 qilinadi
+        ctx.session = ctx.session || {};
+        ctx.session.pendingReferral = referrerId;
+      }
+    }
+  }
 
   const subscribed = await checkSubscription(ctx);
   if (!subscribed) {
@@ -136,6 +222,13 @@ bot.start(async (ctx) => {
       parse_mode: 'Markdown',
       ...subscribeKeyboard()
     });
+  }
+
+  // Obuna tasdiqlangan va referral kutilayotgan bo'lsa — referrerga +1 qo'shamiz
+  const user = await User.findOne({ userId });
+  if (user?.referredBy && !user.referralCounted) {
+    await grantReferral(user.referredBy, ctx);
+    await User.findOneAndUpdate({ userId }, { referralCounted: true });
   }
 
   await ctx.reply('✅ Obuna tasdiqlandi!');
@@ -151,6 +244,14 @@ bot.action('check_sub', async (ctx) => {
     return ctx.answerCbQuery('❌ Hali obuna bo\'lmagansiz!', { show_alert: true });
   }
   try { await ctx.deleteMessage(); } catch {}
+
+  // Referral: obuna endi tasdiqlandi — kutilayotgan referralni hisoblaymiz
+  const user = await User.findOne({ userId: ctx.from.id });
+  if (user?.referredBy && !user.referralCounted) {
+    await grantReferral(user.referredBy, ctx);
+    await User.findOneAndUpdate({ userId: ctx.from.id }, { referralCounted: true });
+  }
+
   await ctx.reply('✅ Obuna tasdiqlandi!');
   await ctx.reply('📊 *Asosiy menyu:*', { parse_mode: 'Markdown', ...mainMenuKeyboard() });
   await showMainMenu(ctx);
@@ -259,10 +360,11 @@ bot.action('autohabar_stop', async (ctx) => {
 });
 
 bot.action('autohabar_stats', async (ctx) => {
-  await ctx.answerCbQuery();
   const user = await User.findOne({ userId: ctx.from.id });
+  const sent = user?.sentCount || 0;
+  const limit = user?.autoStopLimit;
   await ctx.answerCbQuery(
-    `📊 Yuborilgan: ${user?.sentCount || 0} marta`,
+    `📊 Yuborilgan: ${sent} marta` + (limit ? ` (${sent}/${limit})` : ''),
     { show_alert: true }
   );
 });
@@ -300,10 +402,20 @@ bot.action(/^autostop_(\d+)$/, async (ctx) => {
 });
 
 bot.action('autohabar_mention', async (ctx) => {
-  const user = await User.findOne({ userId: ctx.from.id });
+  const userId = ctx.from.id;
+  await getEffectiveTarif(userId); // muddati o'tgan bo'lsa Free ga tushiradi
+
+  const user  = await User.findOne({ userId });
+  const isPro = user?.tarif === 'pro';
+
+  if (!isPro) {
+    await ctx.answerCbQuery("👑 Mention faqat Pro tarifda ishlaydi!", { show_alert: true });
+    return;
+  }
+
   const newVal = !user?.mentionEnabled;
-  await User.findOneAndUpdate({ userId: ctx.from.id }, { mentionEnabled: newVal }, { upsert: true });
-  await ctx.answerCbQuery(newVal ? '📛 Mention yoqildi' : '📛 Mention o\'chirildi');
+  await User.findOneAndUpdate({ userId }, { mentionEnabled: newVal }, { upsert: true });
+  await ctx.answerCbQuery(newVal ? '📛 Mention yoqildi' : "📛 Mention o'chirildi");
   await renderControlPanel(ctx, { edit: true });
 });
 
@@ -361,8 +473,9 @@ function progressBar(current, total, size = 15) {
   return '█'.repeat(filled) + '░'.repeat(size - filled);
 }
 
-bot.hears('👑 Pro tarif', async (ctx) => {
+async function showProTarif(ctx) {
   const userId = ctx.from.id;
+  await getEffectiveTarif(userId); // muddati o'tgan bo'lsa Free ga tushiradi
   const user   = await User.findOne({ userId });
   const tarif  = user?.tarif === 'pro' ? 'Pro' : 'Free';
   const refCount = user?.referralCount || 0;
@@ -371,7 +484,11 @@ bot.hears('👑 Pro tarif', async (ctx) => {
   const botUsername = ctx.botInfo?.username || 'Autoxabarcbot';
   const refLink = `https://t.me/${botUsername}?start=ref_${userId}_0`;
 
-  const text =
+  const expiryLine = (tarif === 'Pro' && user?.proExpiresAt)
+    ? `📅 Amal qilish muddati: ${new Date(user.proExpiresAt).toLocaleDateString('uz-UZ')} gacha\n\n`
+    : '';
+
+  const text = expiryLine +
     `💎 <b>AutoHabar Pro</b>\n\n` +
     `🔋 ${tarif === 'Pro' ? '✅' : '❌'} Siz <b>${tarif}</b> tarifdasiz\n\n` +
     `<blockquote expandable>` +
@@ -415,7 +532,10 @@ bot.hears('👑 Pro tarif', async (ctx) => {
       ]
     ])
   });
-});
+}
+
+bot.hears('👑 Pro tarif', showProTarif);
+bot.action('pro_tarif_menu', async (ctx) => { await ctx.answerCbQuery(); await showProTarif(ctx); });
 
 bot.action('pro_buy_stars', async (ctx) => {
   await ctx.answerCbQuery();
@@ -440,10 +560,83 @@ bot.action('pro_buy_card', async (ctx) => {
   );
 });
 
+// ─── STARS TARIFLARI: miqdor → (kun, tavsif) ─────────────────────────────────
+const STARS_PLANS = {
+  20:  { days: 1,  label: '1 kunlik Pro' },
+  70:  { days: 7,  label: '7 kunlik Pro' },
+  250: { days: 30, label: '30 kunlik Pro' }
+};
+
+// ─── Stars invoice yuborish ───────────────────────────────────────────────────
 bot.action(/^pay_stars_(\d+)$/, async (ctx) => {
   await ctx.answerCbQuery();
-  const amount = ctx.match[1];
-  await ctx.reply(`⭐ ${amount} Stars uchun to\'lov tez orada ishga tushadi (Telegram Stars API).`);
+  const amount = parseInt(ctx.match[1], 10);
+  const plan   = STARS_PLANS[amount];
+
+  if (!plan) return ctx.reply('❌ Noto\'g\'ri tarif tanlandi.');
+
+  try {
+    await ctx.telegram.sendInvoice(ctx.chat.id, {
+      title:          `AutoHabar Pro — ${plan.label}`,
+      description:    `Pro tarifga o'tish: ${plan.days} kun davomida barcha Pro imkoniyatlar ochiladi.`,
+      // payload ichida userId va kun sonini kodlaymiz — to'lov tasdiqlanganda o'qiymiz
+      payload:        `pro_${ctx.from.id}_${plan.days}_${Date.now()}`,
+      provider_token: '',       // Telegram Stars uchun bo'sh qoldiriladi
+      currency:       'XTR',    // Telegram Stars valyutasi
+      prices:         [{ label: plan.label, amount }],
+      start_parameter: `pro_${plan.days}d`
+    });
+  } catch (err) {
+    console.error('[stars] invoice yuborishda xato:', err.message);
+    await ctx.reply(`❌ To'lov oynasini ochib bo'lmadi.\n\`${err.message}\``, { parse_mode: 'Markdown' });
+  }
+});
+
+// ─── Pre-checkout — Telegram to'lovdan oldin tasdiq so'raydi ─────────────────
+bot.on('pre_checkout_query', async (ctx) => {
+  try {
+    await ctx.answerPreCheckoutQuery(true);
+  } catch (err) {
+    console.error('[stars] pre_checkout xato:', err.message);
+    await ctx.answerPreCheckoutQuery(false, 'Xatolik yuz berdi, qayta urinib ko\'ring.');
+  }
+});
+
+// ─── To'lov muvaffaqiyatli bo'lganda — Pro tarifni yoqamiz ───────────────────
+bot.on('message', async (ctx, next) => {
+  const payment = ctx.message?.successful_payment;
+  if (!payment) return next();
+
+  try {
+    const userId = ctx.from.id;
+    const parts  = payment.invoice_payload.split('_'); // ['pro', userId, days, ts]
+    const days   = parseInt(parts[2], 10) || 30;
+
+    const user = await User.findOne({ userId });
+    const now  = new Date();
+    // Agar hali Pro muddati tugamagan bo'lsa — kunlar ustiga qo'shamiz, aks holda bugundan boshlab
+    const base = (user?.proExpiresAt && user.proExpiresAt > now) ? user.proExpiresAt : now;
+    const newExpiry = new Date(base.getTime() + days * 24 * 60 * 60 * 1000);
+
+    await User.findOneAndUpdate(
+      { userId },
+      { tarif: 'pro', proExpiresAt: newExpiry },
+      { upsert: true }
+    );
+
+    await ctx.reply(
+      `✅ *To'lov muvaffaqiyatli qabul qilindi!*\n\n` +
+      `💎 Pro tarif ${days} kunga faollashtirildi.\n` +
+      `📅 Amal qilish muddati: ${newExpiry.toLocaleDateString('uz-UZ')} gacha\n\n` +
+      `Barcha Pro imkoniyatlar endi ochiq! 🚀`,
+      { parse_mode: 'Markdown' }
+    );
+
+    console.log(`[stars] userId:${userId} Pro tarifga o'tdi (${days} kun, ${payment.total_amount} XTR)`);
+  } catch (err) {
+    console.error('[stars] successful_payment ishlov berishda xato:', err.message);
+    await ctx.reply('⚠️ To\'lov qabul qilindi, lekin faollashtirishda xato yuz berdi. Admin bilan bog\'laning.');
+  }
 });
 
 bot.hears('🗂 Kabinet', async (ctx) => {
