@@ -639,12 +639,110 @@ bot.on('message', async (ctx, next) => {
   }
 });
 
-bot.hears('🗂 Kabinet', async (ctx) => {
-  const count = await Account.countDocuments({ userId: ctx.from.id });
+function daysAgo(date) {
+  if (!date) return '—';
+  const diffMs = Date.now() - new Date(date).getTime();
+  const days   = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+  if (days <= 0) return 'Bugun';
+  if (days === 1) return '1 kun oldin';
+  return `${days} kun oldin`;
+}
+
+async function showKabinet(ctx) {
+  const userId = ctx.from.id;
+  await getEffectiveTarif(userId); // muddati o'tgan bo'lsa Free ga tushiradi
+
+  const [user, acc, profileCount] = await Promise.all([
+    User.findOne({ userId }),
+    Account.findOne({ userId, isActive: true }),
+    Account.countDocuments({ userId })
+  ]);
+
+  const isPro   = user?.tarif === 'pro';
+  const interval = user?.interval || 300;
+
+  // Guruhlar soni
+  let groupCount = 0;
+  if (acc) {
+    if ((user?.groupMode || 'all') === 'selected') {
+      groupCount = user?.selectedGroups?.length || 0;
+    } else {
+      try {
+        const { fetchLiveGroups } = require('./guruhlar');
+        groupCount = (await fetchLiveGroups(acc)).length;
+      } catch { groupCount = 0; }
+    }
+  }
+
+  // Bugungi hisoblagichni yangilab olamiz (kun almashgan bo'lsa 0 ko'rsatish uchun)
+  const today = new Date().toISOString().slice(0, 10);
+  const todaySent = (user?.todaySentDate === today) ? (user?.todaySentCount || 0) : 0;
+
+  const phoneDisplay    = acc ? `++${acc.phone.replace(/^\+/, '')}` : '—';
+  const usernameDisplay = ctx.from.username ? `@${ctx.from.username}` : '—';
+
+  const text =
+    `👤 <b>Sizning Kabinetingiz</b>\n\n` +
+    `👥 Ism: ${ctx.from.first_name || '—'}\n` +
+    `📞 Raqam: ${phoneDisplay}\n` +
+    `📧 Username: ${usernameDisplay}\n\n` +
+    `📊 <b>Statistika:</b>\n` +
+    `✅ Bugun yuborildi: ${todaySent}\n` +
+    `🔁 Jami yuborilgan: ${formatCount(user?.totalSentCount || 0)}\n` +
+    `👥➕ Guruhlar: ${groupCount}\n` +
+    `📱 Jami profillar: ${profileCount}\n` +
+    `🕐 Qo'shilgan: ${daysAgo(user?.createdAt)}\n\n` +
+    `⭐ Tarif: ${isPro ? '👑 Pro' : '🆓 Free'}\n` +
+    `💎 Premium: ${isPro ? `Pro (${user.proExpiresAt ? new Date(user.proExpiresAt).toLocaleDateString('uz-UZ') : '—'} gacha)` : "Pro yo'q"}\n` +
+    `⏱ Interval: ${interval} soniya`;
+
+  const kb = Markup.inlineKeyboard([
+    [Markup.button.callback('⚠️ Profilni uzish', 'kabinet_unlink')],
+    [Markup.button.callback('❌ Yopish', 'kabinet_close')]
+  ]);
+
+  if (ctx.callbackQuery) {
+    await ctx.answerCbQuery();
+    try { return await ctx.editMessageText(text, { parse_mode: 'HTML', ...kb }); } catch {}
+  }
+  return ctx.reply(text, { parse_mode: 'HTML', ...kb });
+}
+
+function formatCount(n) {
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}K`;
+  return String(n);
+}
+
+bot.hears('🗂 Kabinet', showKabinet);
+
+bot.action('kabinet_unlink', async (ctx) => {
+  await ctx.answerCbQuery();
   await ctx.reply(
-    `🗂 *Kabinet*\n\n👤 Ism: ${ctx.from.first_name}\n🆔 ID: \`${ctx.from.id}\`\n📱 Akkauntlar: ${count} ta\n⭐ Tarif: Bepul`,
-    { parse_mode: 'Markdown' }
+    "⚠️ *Profilni uzishni tasdiqlaysizmi?*\n\nBu akkaunt o'chiriladi va autohabar to'xtatiladi.",
+    {
+      parse_mode: 'Markdown',
+      ...Markup.inlineKeyboard([
+        [
+          Markup.button.callback('✅ Ha, uzish', 'kabinet_unlink_confirm'),
+          Markup.button.callback('❌ Bekor qilish', 'kabinet_close')
+        ]
+      ])
+    }
   );
+});
+
+bot.action('kabinet_unlink_confirm', async (ctx) => {
+  await ctx.answerCbQuery();
+  const userId = ctx.from.id;
+  await stopAutoSend(userId);
+  await Account.deleteMany({ userId });
+  try { await ctx.deleteMessage(); } catch {}
+  await ctx.reply('✅ Profil uzildi. Yangi akkaunt ulash uchun bosh menyudan foydalaning.');
+});
+
+bot.action('kabinet_close', async (ctx) => {
+  await ctx.answerCbQuery();
+  try { await ctx.deleteMessage(); } catch {}
 });
 
 bot.hears('⚙️ Sozlamalar',         (ctx) => ctx.reply('⚙️ Sozlamalar (tez kunda)...'));
