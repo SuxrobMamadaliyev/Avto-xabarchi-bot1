@@ -1,15 +1,14 @@
-const { Markup } = require('telegraf');
 const { Scenes } = require('telegraf');
+const { iBtn, rawInline } = require('./styledKb');
 const mongoose = require('mongoose');
 
-// Message settings model
 const msgSchema = new mongoose.Schema({
-  userId:   { type: Number, required: true, unique: true },
-  type:     { type: String, default: 'text' }, // 'text' | 'photo' | 'button'
-  text:     { type: String },
-  photoId:  { type: String },
-  buttons:  { type: Array, default: [] },
-  updatedAt:{ type: Date, default: Date.now }
+  userId:    { type: Number, required: true, unique: true },
+  type:      { type: String, default: 'text' },
+  text:      { type: String },
+  photoId:   { type: String },
+  buttons:   { type: Array, default: [] },
+  updatedAt: { type: Date, default: Date.now }
 });
 const MsgSettings = mongoose.models.MsgSettings || mongoose.model('MsgSettings', msgSchema);
 
@@ -31,24 +30,22 @@ async function habarMatniHandler(ctx) {
     `👇 Xabar turini tanlang:`,
     {
       parse_mode: 'Markdown',
-      ...Markup.inlineKeyboard([
-        [Markup.button.callback('📝 Matn',           'msg_type_text')],
-        [Markup.button.callback('🖼 Rasm+matn',      'msg_type_photo')],
-        [Markup.button.callback('➡️ Forward 🔒',     'msg_type_forward_locked')],
-        [Markup.button.callback('🔘 Tugmali habar',  'msg_type_button')],
-        [Markup.button.callback('📋 Turli habarlar 🔒', 'msg_type_multi_locked')],
-        [Markup.button.callback('⬅️ Orqaga',         'main_menu')]
+      ...rawInline([
+        [iBtn('📝 Matn',              'msg_type_text',           'primary')],
+        [iBtn('🖼 Rasm+matn',         'msg_type_photo',          'primary')],
+        [iBtn('➡️ Forward 🔒',        'msg_type_forward_locked', 'danger')],
+        [iBtn('🔘 Tugmali habar',     'msg_type_button',         'primary')],
+        [iBtn('📋 Turli habarlar 🔒', 'msg_type_multi_locked',   'danger')],
+        [iBtn('⬅️ Orqaga',           'main_menu')]
       ])
     }
   );
 }
 
-// Forward — Pro tarifda
 async function msgForwardLockedAction(ctx) {
   await ctx.answerCbQuery('🔒 Bu funksiya faqat Pro tarifda!', { show_alert: true });
 }
 
-// Turli habarlar — Pro tarifda
 async function msgMultiLockedAction(ctx) {
   await ctx.answerCbQuery('🔒 Bu funksiya faqat Pro tarifda!', { show_alert: true });
 }
@@ -67,9 +64,7 @@ const textMsgScene = new Scenes.WizardScene(
       '<b>qalin</b>, <i>kursiv</i>, <code>kod</code>',
       {
         parse_mode: 'Markdown',
-        ...Markup.inlineKeyboard([
-          [Markup.button.callback('❌ Bekor qilish', 'cancel_msg')]
-        ])
+        ...rawInline([[iBtn('❌ Bekor qilish', 'cancel_msg', 'danger')]])
       }
     );
     return ctx.wizard.next();
@@ -119,9 +114,7 @@ const photoMsgScene = new Scenes.WizardScene(
       'Rasmni yuborishdan oldin caption (izoh) ham qo\'shishingiz mumkin.',
       {
         parse_mode: 'Markdown',
-        ...Markup.inlineKeyboard([
-          [Markup.button.callback('❌ Bekor qilish', 'cancel_msg')]
-        ])
+        ...rawInline([[iBtn('❌ Bekor qilish', 'cancel_msg', 'danger')]])
       }
     );
     return ctx.wizard.next();
@@ -150,9 +143,9 @@ const photoMsgScene = new Scenes.WizardScene(
       '_(Matn bo\'lmasa "o\'tkazib yuborish" tugmasini bosing)_',
       {
         parse_mode: 'Markdown',
-        ...Markup.inlineKeyboard([
-          [Markup.button.callback('⏭ O\'tkazib yuborish', 'skip_caption')],
-          [Markup.button.callback('❌ Bekor qilish', 'cancel_msg')]
+        ...rawInline([
+          [iBtn('⏭ O\'tkazib yuborish', 'skip_caption', 'primary')],
+          [iBtn('❌ Bekor qilish',      'cancel_msg',    'danger')]
         ])
       }
     );
@@ -188,13 +181,8 @@ const photoMsgScene = new Scenes.WizardScene(
   }
 );
 
-photoMsgScene.action('skip_caption', async (ctx) => {
-  await ctx.answerCbQuery();
-});
-photoMsgScene.action('cancel_msg', async (ctx) => {
-  await ctx.answerCbQuery();
-  await ctx.scene.leave();
-});
+photoMsgScene.action('skip_caption', async (ctx) => { await ctx.answerCbQuery(); });
+photoMsgScene.action('cancel_msg',   async (ctx) => { await ctx.answerCbQuery(); await ctx.scene.leave(); });
 
 // ─── TUGMALI HABAR SCENE ─────────────────────────────────────────────────────
 const buttonMsgScene = new Scenes.WizardScene(
@@ -206,9 +194,7 @@ const buttonMsgScene = new Scenes.WizardScene(
       'Xabar matnini kiriting:',
       {
         parse_mode: 'Markdown',
-        ...Markup.inlineKeyboard([
-          [Markup.button.callback('❌ Bekor qilish', 'cancel_msg')]
-        ])
+        ...rawInline([[iBtn('❌ Bekor qilish', 'cancel_msg', 'danger')]])
       }
     );
     return ctx.wizard.next();
@@ -235,9 +221,9 @@ const buttonMsgScene = new Scenes.WizardScene(
       'Bir necha tugma uchun har birini yangi qatorga yozing.',
       {
         parse_mode: 'Markdown',
-        ...Markup.inlineKeyboard([
-          [Markup.button.callback('⏭ Tugsiz saqlash', 'save_no_buttons')],
-          [Markup.button.callback('❌ Bekor qilish', 'cancel_msg')]
+        ...rawInline([
+          [iBtn('⏭ Tugsiz saqlash', 'save_no_buttons', 'primary')],
+          [iBtn('❌ Bekor qilish',   'cancel_msg',       'danger')]
         ])
       }
     );
@@ -284,13 +270,8 @@ const buttonMsgScene = new Scenes.WizardScene(
   }
 );
 
-buttonMsgScene.action('save_no_buttons', async (ctx) => {
-  await ctx.answerCbQuery();
-});
-buttonMsgScene.action('cancel_msg', async (ctx) => {
-  await ctx.answerCbQuery();
-  await ctx.scene.leave();
-});
+buttonMsgScene.action('save_no_buttons', async (ctx) => { await ctx.answerCbQuery(); });
+buttonMsgScene.action('cancel_msg',      async (ctx) => { await ctx.answerCbQuery(); await ctx.scene.leave(); });
 
 module.exports = {
   habarMatniHandler,
