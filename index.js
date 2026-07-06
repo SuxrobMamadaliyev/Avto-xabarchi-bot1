@@ -129,11 +129,8 @@ function mainMenuKeyboard() {
   return rawReply([
     [rBtn('🚀 Autohabar yuborish', 'success'), rBtn('✏️ Habar matni', 'success')],
     [rBtn('⏱ Interval', 'primary'),            rBtn('💬 Guruhlarni sozlash', 'primary')],
-    [rBtn('👤 Profillar', 'danger'),            rBtn('👑 Pro tarif', 'danger')],
-    [rBtn('🗂 Kabinet', 'primary'),             rBtn('⚙️ Sozlamalar', 'primary')],
-    [rBtn('📅 Kalendar', 'primary'),            rBtn('🔧 Foydali funksiyalar')],
-    [rBtn('📊 Statistika', 'success'),          rBtn('🙋 Yordam', 'success')],
-    [rBtn('📖 Qo\'llanma', 'danger'),           rBtn('↩️ Autoreply', 'danger')],
+    [rBtn('👤 Profillar', 'danger'),            rBtn('🗂 Kabinet', 'primary')],
+    [rBtn('📖 Qo\'llanma', 'danger')],
   ]);
 }
 
@@ -523,7 +520,6 @@ async function showProTarif(ctx) {
   });
 }
 
-bot.hears('👑 Pro tarif', showProTarif);
 bot.action('pro_tarif_menu', async (ctx) => { await ctx.answerCbQuery(); await showProTarif(ctx); });
 
 bot.action('pro_buy_stars', async (ctx) => {
@@ -730,20 +726,7 @@ bot.action('kabinet_close', async (ctx) => {
   try { await ctx.deleteMessage(); } catch {}
 });
 
-bot.hears('⚙️ Sozlamalar',         (ctx) => ctx.reply('⚙️ Sozlamalar (tez kunda)...'));
-bot.hears('📅 Kalendar',           (ctx) => ctx.reply('📅 Kalendar (tez kunda)...'));
-bot.hears('🔧 Foydali funksiyalar',(ctx) => ctx.reply('🔧 Foydali funksiyalar (tez kunda)...'));
-bot.hears('📊 Statistika',         (ctx) => ctx.reply('📊 Statistika (tez kunda)...'));
-
-bot.hears('🙋 Yordam', (ctx) =>
-  ctx.reply(
-    '🙋 *Yordam*\n\n1. Akkaunt qo\'shing\n2. Guruhlarni tanlang\n3. Habar matnini yozing\n4. Intervalni sozlang\n5. Autohabarni yoqing\n\n📞 Admin: @admin',
-    { parse_mode: 'Markdown' }
-  )
-);
-
 bot.hears('📖 Qo\'llanma', (ctx) => ctx.reply('📖 Qo\'llanma (tez kunda)...'));
-bot.hears('↩️ Autoreply',  (ctx) => ctx.reply('↩️ Autoreply (tez kunda)...'));
 
 // ─── GURUH /id BUYRUG'I ───────────────────────────────────────────────────────
 bot.command('id', async (ctx) => {
