@@ -136,15 +136,20 @@ function subscribeKeyboard() {
 }
 
 // ─── ASOSIY MENYU ─────────────────────────────────────────────────────────────
+// ─── Reply keyboard tugmasi + rang (Bot API 9.4: KeyboardButton.style) ───────
+function kbBtn(text, style) {
+  return style ? { text, style } : { text };
+}
+
 function mainMenuKeyboard() {
   return Markup.keyboard([
-    ['🚀 Autohabar yuborish', '✏️ Habar matni'],
-    ['⏱ Interval',           '💬 Guruhlarni sozlash'],
-    ['👤 Profillar',          '👑 Pro tarif'],
-    ['🗂 Kabinet',            '⚙️ Sozlamalar'],
-    ['📅 Kalendar',           '🔧 Foydali funksiyalar'],
-    ['📊 Statistika',         '🙋 Yordam'],
-    ['📖 Qo\'llanma',         '↩️ Autoreply'],
+    [kbBtn('🚀 Autohabar yuborish', 'success'), kbBtn('✏️ Habar matni', 'success')],
+    [kbBtn('⏱ Interval', 'primary'),            kbBtn('💬 Guruhlarni sozlash', 'primary')],
+    [kbBtn('👤 Profillar', 'danger'),            kbBtn('👑 Pro tarif', 'danger')],
+    [kbBtn('🗂 Kabinet', 'primary'),             kbBtn('⚙️ Sozlamalar', 'primary')],
+    [kbBtn('📅 Kalendar', 'primary'),            kbBtn('🔧 Foydali funksiyalar')],
+    [kbBtn('📊 Statistika', 'success'),          kbBtn('🙋 Yordam', 'success')],
+    [kbBtn('📖 Qo\'llanma', 'danger'),           kbBtn('↩️ Autoreply', 'danger')],
   ]).resize();
 }
 
