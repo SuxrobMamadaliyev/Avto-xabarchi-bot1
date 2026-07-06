@@ -20,18 +20,56 @@ async function fetchLiveGroups(account) {
   let dialogs = [];
   try {
     await client.connect();
-    dialogs = await client.getDialogs({ limit: 200 });
+    dialogs = await client.getDialogs({ limit: 500, archived: false });
   } finally {
     try { await client.disconnect(); } catch {}
   }
 
-  return dialogs
-    .filter(d => d.isGroup || d.isChannel || d.isBroadcast)
-    .map((d, i) => ({
-      groupId:   typeof d.id === 'bigint' ? d.id.toString() : String(d.id),
-      groupName: (d.title || d.name || 'Nomsiz guruh').trim(),
+  console.log(`[guruhlar] Jami dialoglar: ${dialogs.length} ta`);
+
+  const groups = [];
+  for (let i = 0; i < dialogs.length; i++) {
+    const d      = dialogs[i];
+    const entity = d.entity;
+
+    // entity kelmagan bo'lsa ham, peer'dan className olishga urinamiz
+    const cn = entity?.className || d.dialog?.peer?.className || '';
+
+    console.log(`[guruhlar] #${i}: className=${cn} isGroup=${d.isGroup} isChannel=${d.isChannel} title="${entity?.title || d.title || ''}"`);
+
+    // Faqat guruhlar: oddiy Chat, ChatForbidden yoki megagroup (super)Channel.
+    // Broadcast kanallar (megagroup=false) va shaxsiy chatlar (User) chiqarib tashlanadi.
+    if (cn === 'User') continue;
+    if (!cn) continue; // aniqlab bo'lmagan holatlarni tashlab ketamiz
+
+    const isPlainGroup   = cn === 'Chat' || cn === 'ChatForbidden';
+    const isSupergroup   = (cn === 'Channel' || cn === 'ChannelForbidden') &&
+                            Boolean(entity?.megagroup);
+
+    if (!isPlainGroup && !isSupergroup) {
+      console.log(`[guruhlar] #${i}: kanal bo'lgani uchun o'tkazib yuborildi (className=${cn}, megagroup=${entity?.megagroup})`);
+      continue;
+    }
+
+    const id =
+      typeof d.id === 'bigint' ? d.id.toString() :
+      d.id != null ? String(d.id) :
+      entity?.id != null ? String(entity.id) : null;
+
+    if (!id) {
+      console.log(`[guruhlar] #${i}: ID topilmadi, o'tkazib yuborildi (className=${cn})`);
+      continue;
+    }
+
+    groups.push({
+      groupId:   id,
+      groupName: (entity?.title || d.title || d.name || 'Nomsiz guruh').trim(),
       order:     i
-    }));
+    });
+  }
+
+  console.log(`[guruhlar] Filtrlangan guruhlar: ${groups.length} ta`);
+  return groups;
 }
 
 // ─── Cache (session da, 2 daqiqa) ────────────────────────────────────────────
