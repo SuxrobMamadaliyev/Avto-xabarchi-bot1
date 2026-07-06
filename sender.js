@@ -8,6 +8,27 @@ function fetchLiveGroups() { return require('./guruhlar').fetchLiveGroups; }
 
 const activeTimers = new Map();
 
+// ─── Free tarif watermark ─────────────────────────────────────────────────────
+const WATERMARK = '\n\n〰️〰️〰️\n🤖 @Autoxabarcbot orqali yuborildi';
+
+// ─── Mention: guruhdan bir nechta a'zoni @ qilib chaqirish (Pro funksiyasi) ──
+async function buildMentionSuffix(client, targetId) {
+  try {
+    const participants = await client.getParticipants(targetId, { limit: 30 });
+    // Faqat username'i bor, bot bo'lmagan foydalanuvchilarni tanlaymiz
+    const candidates = participants.filter(p => p.username && !p.bot);
+    if (!candidates.length) return '';
+
+    // Tasodifiy 3 tagacha a'zoni tanlaymiz (spam ko'rinishini kamaytirish uchun)
+    const shuffled = candidates.sort(() => Math.random() - 0.5).slice(0, 3);
+    const mentions = shuffled.map(u => `@${u.username}`).join(' ');
+    return `\n\n${mentions}`;
+  } catch (err) {
+    console.error('[sender] mention olishda xato:', err.message);
+    return '';
+  }
+}
+
 async function sendToGroups(userId, bot) {
   const MsgSettings = getMsgSettings();
 
@@ -37,22 +58,33 @@ async function sendToGroups(userId, bot) {
     return false;
   }
 
+  // ─── Pro / Free tekshiruvi ────────────────────────────────────────────────
+  const isPro = user.tarif === 'pro' && (!user.proExpiresAt || user.proExpiresAt > new Date());
+  const mentionOn = isPro && user.mentionEnabled; // mention faqat Pro'da ishlaydi
+
+  // ─── Avto-o'chirish limiti tekshiruvi ────────────────────────────────────
+  if (user.autoStopLimit && user.sentCount >= user.autoStopLimit) {
+    await bot.telegram.sendMessage(userId,
+      `⏱ *Avto-o'chirish limitiga yetdingiz!*\n\n${user.autoStopLimit} marta yuborilgach avtomatik to'xtatildi.`,
+      { parse_mode: 'Markdown' }
+    );
+    await User.findOneAndUpdate({ userId }, { isRunning: false, sentCount: 0 });
+    return false;
+  }
+
   // ─── Guruhlarni aniqlash ───────────────────────────────────────────────────
   let targets = []; // [{ groupId, groupName }]
 
   const groupMode = user.groupMode || 'all';
 
   if (groupMode === 'selected') {
-    // Faqat tanlangan IDlar — MongoDB ga urmasdan to'g'ridan-to'g'ri yuboramiz
     targets = (user.selectedGroups || []).map(id => ({ groupId: id, groupName: id }));
   } else {
-    // Hamma guruhlar — GramJS dan live olamiz
     try {
       const getLive = fetchLiveGroups();
       targets = await getLive(account);
     } catch (err) {
       console.error('[sender] live guruhlar olinmadi:', err.message);
-      // Fallback: selectedGroups ishlatamiz
       targets = (user.selectedGroups || []).map(id => ({ groupId: id, groupName: id }));
     }
   }
@@ -82,16 +114,27 @@ async function sendToGroups(userId, bot) {
     connected = true;
 
     for (const group of targets) {
-      // Har qadam oldida isRunning tekshiramiz
       const still = await User.findOne({ userId }, 'isRunning').lean();
       if (!still?.isRunning) break;
 
       try {
         const targetId = group.groupId.startsWith('-') || /^\d/.test(group.groupId)
-          ? BigInt(group.groupId)   // raqamli ID — BigInt sifatida
-          : group.groupId;          // @username
+          ? BigInt(group.groupId)
+          : group.groupId;
 
-        await client.sendMessage(targetId, { message: msg.text });
+        // ─── Xabar matnini tayyorlash: base + mention (Pro) + watermark (Free) ──
+        let finalText = msg.text;
+
+        if (mentionOn) {
+          const mentionSuffix = await buildMentionSuffix(client, targetId);
+          finalText += mentionSuffix;
+        }
+
+        if (!isPro) {
+          finalText += WATERMARK; // Free tarifda majburiy watermark
+        }
+
+        await client.sendMessage(targetId, { message: finalText });
         sent++;
         console.log(`[sender] ✅ ${group.groupName} (userId:${userId})`);
       } catch (err) {
@@ -103,6 +146,11 @@ async function sendToGroups(userId, bot) {
     }
   } finally {
     if (connected) { try { await client.disconnect(); } catch {} }
+  }
+
+  // ─── Yuborilgan sonini hisoblash (statistika + avto-o'chirish uchun) ──────
+  if (sent > 0) {
+    await User.findOneAndUpdate({ userId }, { $inc: { sentCount: sent } });
   }
 
   console.log(`[sender] userId:${userId} — ${sent} yuborildi, ${failed} xato`);
@@ -126,9 +174,9 @@ async function scheduleNext(userId, bot) {
 
 async function startAutoSend(userId, bot) {
   stopAutoSend(userId);
-  await User.findOneAndUpdate({ userId }, { isRunning: true }, { upsert: true });
+  await User.findOneAndUpdate({ userId }, { isRunning: true, sentCount: 0 }, { upsert: true });
   activeTimers.set(userId, null);
-  scheduleNext(userId, bot); // async, kutmaymiz
+  scheduleNext(userId, bot);
 }
 
 async function stopAutoSend(userId) {
