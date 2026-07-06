@@ -667,11 +667,11 @@ async function showKabinet(ctx) {
   const usernameDisplay = ctx.from.username ? `@${ctx.from.username}` : '—';
 
   const text =
-    `👤 <b>Sizning Kabinetingiz</b>\n\n` +
-    `👥 Ism: ${ctx.from.first_name || '—'}\n` +
-    `📞 Raqam: ${phoneDisplay}\n` +
-    `📧 Username: ${usernameDisplay}\n\n` +
-    `📊 <b>Statistika:</b>\n` +
+    `<tg-emoji emoji-id="5467730450002746997">👤</tg-emoji> <b>Sizning Kabinetingiz</b>\n\n` +
+    `<tg-emoji emoji-id="5467772583631921166">📝</tg-emoji> Ism: ${ctx.from.first_name || '—'}\n` +
+    `<tg-emoji emoji-id="5467665965363764620">📱</tg-emoji> Raqam: ${phoneDisplay}\n` +
+    `<tg-emoji emoji-id="5467626799556992380">🔗</tg-emoji> Username: ${usernameDisplay}\n\n` +
+    `<tg-emoji emoji-id="5465295864970878728">📊</tg-emoji> <b>Statistika:</b>\n` +
     `✅ Bugun yuborildi: ${todaySent}\n` +
     `🔁 Jami yuborilgan: ${formatCount(user?.totalSentCount || 0)}\n` +
     `👥➕ Guruhlar: ${groupCount}\n` +
