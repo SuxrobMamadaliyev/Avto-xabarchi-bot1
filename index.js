@@ -1,5 +1,14 @@
 require('dotenv').config();
 const { Telegraf, Scenes, session, Markup } = require('telegraf');
+
+// ─── Bot API 9.4 (2026-02-09): tugmalarga rang berish ────────────────────────
+// style: 'primary' (ko'k) | 'danger' (qizil) | 'success' (yashil)
+// Eski Telegram versiyalarida bu maydon e'tiborsiz qoldiriladi (xato bermaydi),
+// shuning uchun matn ichidagi emoji ham fallback sifatida saqlab qolinadi.
+function styledButton(text, callback_data, style) {
+  const btn = Markup.button.callback(text, callback_data);
+  return style ? { ...btn, style } : btn;
+}
 const mongoose = require('mongoose');
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
@@ -315,15 +324,15 @@ async function buildControlPanel(ctx) {
   const kb = Markup.inlineKeyboard([
     [
       running
-        ? Markup.button.callback('⏸ To\'xtatish', 'autohabar_stop')
-        : Markup.button.callback('▶️ Ishga tushurish', 'autohabar_start'),
-      Markup.button.callback('🔴 Statistika', 'autohabar_stats')
+        ? styledButton('🔴 To\'xtatish', 'autohabar_stop', 'danger')
+        : styledButton('🟢 Ishga tushurish', 'autohabar_start', 'success'),
+      styledButton('🔵 Statistika', 'autohabar_stats', 'primary')
     ],
     [
-      Markup.button.callback('⏱ Avto-o\'chirish taymer', 'autohabar_autostop'),
-      Markup.button.callback(`💬 Mention: ${mentionOn ? 'Yoqiq' : "O'chiq"}`, 'autohabar_mention')
+      styledButton('🟠 Avto-o\'chirish taymer', 'autohabar_autostop'),
+      styledButton(`🟣 Mention: ${mentionOn ? 'Yoqiq' : "O'chiq"}`, 'autohabar_mention', mentionOn ? 'success' : undefined)
     ],
-    [Markup.button.callback('⬅️ Yopish', 'autohabar_close')]
+    [styledButton('⚫️ Yopish', 'autohabar_close')]
   ]);
 
   return { text, kb };
@@ -527,8 +536,8 @@ async function showProTarif(ctx) {
     parse_mode: 'HTML',
     ...Markup.inlineKeyboard([
       [
-        Markup.button.callback('⭐ Stars orqali sotib olish', 'pro_buy_stars'),
-        Markup.button.callback('💳 Karta orqali sotib olish', 'pro_buy_card')
+        styledButton('🟢 Stars orqali sotib olish', 'pro_buy_stars', 'success'),
+        styledButton('🔵 Karta orqali sotib olish', 'pro_buy_card', 'primary')
       ]
     ])
   });
@@ -697,8 +706,8 @@ async function showKabinet(ctx) {
     `⏱ Interval: ${interval} soniya`;
 
   const kb = Markup.inlineKeyboard([
-    [Markup.button.callback('⚠️ Profilni uzish', 'kabinet_unlink')],
-    [Markup.button.callback('❌ Yopish', 'kabinet_close')]
+    [styledButton('🔴 Profilni uzish', 'kabinet_unlink', 'danger')],
+    [styledButton('⚫️ Yopish', 'kabinet_close')]
   ]);
 
   if (ctx.callbackQuery) {
@@ -723,8 +732,8 @@ bot.action('kabinet_unlink', async (ctx) => {
       parse_mode: 'Markdown',
       ...Markup.inlineKeyboard([
         [
-          Markup.button.callback('✅ Ha, uzish', 'kabinet_unlink_confirm'),
-          Markup.button.callback('❌ Bekor qilish', 'kabinet_close')
+          styledButton('✅ Ha, uzish', 'kabinet_unlink_confirm', 'danger'),
+          styledButton('⚫️ Bekor qilish', 'kabinet_close')
         ]
       ])
     }
