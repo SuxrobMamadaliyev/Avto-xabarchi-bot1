@@ -1,14 +1,6 @@
 require('dotenv').config();
 const { Telegraf, Scenes, session, Markup } = require('telegraf');
-
-// ─── Bot API 9.4 (2026-02-09): tugmalarga rang berish ────────────────────────
-// style: 'primary' (ko'k) | 'danger' (qizil) | 'success' (yashil)
-// Eski Telegram versiyalarida bu maydon e'tiborsiz qoldiriladi (xato bermaydi),
-// shuning uchun matn ichidagi emoji ham fallback sifatida saqlab qolinadi.
-function styledButton(text, callback_data, style) {
-  const btn = Markup.button.callback(text, callback_data);
-  return style ? { ...btn, style } : btn;
-}
+const { iBtn, iUrl, rawInline, rBtn, rawReply } = require('./styledKb');
 const mongoose = require('mongoose');
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
@@ -45,7 +37,7 @@ async function grantReferral(referrerId, ctx) {
 
     await User.findOneAndUpdate(
       { userId: referrerId },
-      { tarif: 'pro', proExpiresAt: newExpiry, referralCount: 0 } // hisoblagich qayta boshlanadi
+      { tarif: 'pro', proExpiresAt: newExpiry, referralCount: 0 }
     );
 
     try {
@@ -57,7 +49,6 @@ async function grantReferral(referrerId, ctx) {
     } catch {}
   }
 }
-
 
 const { intervalHandler, setIntervalAction, intervalInfoAction, intervalManualScene } = require('./interval');
 const { guruhlarHandler, groupModeAllAction, groupModeSelectAction, toggleGroupAction, groupPageAction, groupSelectAllAction, groupSaveAction, groupSyncAction, addGroupScene, onBotAddedToGroup } = require('./guruhlar');
@@ -107,9 +98,7 @@ async function checkExpiredProUsers() {
     console.error('[cron] xato:', err.message);
   }
 }
-// Har soatda tekshiradi
 setInterval(checkExpiredProUsers, 60 * 60 * 1000);
-// Bot ishga tushganda ham darhol bir marta tekshiradi
 setTimeout(checkExpiredProUsers, 10 * 1000);
 
 // ─── MAJBURIY OBUNA ───────────────────────────────────────────────────────────
@@ -129,28 +118,23 @@ async function checkSubscription(ctx) {
 }
 
 function subscribeKeyboard() {
-  const buttons = CHANNELS.map((ch, i) =>
-    [Markup.button.url(`📢 Kanal ${i + 1}`, `https://t.me/${ch.replace('@', '')}`)]);
-  buttons.push([Markup.button.callback('✅ Obuna bo\'ldim', 'check_sub')]);
-  return Markup.inlineKeyboard(buttons);
+  const rows = CHANNELS.map((ch, i) =>
+    [iUrl(`📢 Kanal ${i + 1}`, `https://t.me/${ch.replace('@', '')}`)]);
+  rows.push([iBtn('✅ Obuna bo\'ldim', 'check_sub', 'success')]);
+  return rawInline(rows);
 }
 
-// ─── ASOSIY MENYU ─────────────────────────────────────────────────────────────
-// ─── Reply keyboard tugmasi + rang (Bot API 9.4: KeyboardButton.style) ───────
-function kbBtn(text, style) {
-  return style ? { text, style } : { text };
-}
-
+// ─── ASOSIY MENYU (Reply keyboard) ───────────────────────────────────────────
 function mainMenuKeyboard() {
-  return Markup.keyboard([
-    [kbBtn('🚀 Autohabar yuborish', 'success'), kbBtn('✏️ Habar matni', 'success')],
-    [kbBtn('⏱ Interval', 'primary'),            kbBtn('💬 Guruhlarni sozlash', 'primary')],
-    [kbBtn('👤 Profillar', 'danger'),            kbBtn('👑 Pro tarif', 'danger')],
-    [kbBtn('🗂 Kabinet', 'primary'),             kbBtn('⚙️ Sozlamalar', 'primary')],
-    [kbBtn('📅 Kalendar', 'primary'),            kbBtn('🔧 Foydali funksiyalar')],
-    [kbBtn('📊 Statistika', 'success'),          kbBtn('🙋 Yordam', 'success')],
-    [kbBtn('📖 Qo\'llanma', 'danger'),           kbBtn('↩️ Autoreply', 'danger')],
-  ]).resize();
+  return rawReply([
+    [rBtn('🚀 Autohabar yuborish', 'success'), rBtn('✏️ Habar matni', 'success')],
+    [rBtn('⏱ Interval', 'primary'),            rBtn('💬 Guruhlarni sozlash', 'primary')],
+    [rBtn('👤 Profillar', 'danger'),            rBtn('👑 Pro tarif', 'danger')],
+    [rBtn('🗂 Kabinet', 'primary'),             rBtn('⚙️ Sozlamalar', 'primary')],
+    [rBtn('📅 Kalendar', 'primary'),            rBtn('🔧 Foydali funksiyalar')],
+    [rBtn('📊 Statistika', 'success'),          rBtn('🙋 Yordam', 'success')],
+    [rBtn('📖 Qo\'llanma', 'danger'),           rBtn('↩️ Autoreply', 'danger')],
+  ]);
 }
 
 function escapeMdV2(text) {
@@ -177,9 +161,7 @@ async function showMainMenu(ctx) {
 
     return ctx.reply(menuText, {
       parse_mode: 'MarkdownV2',
-      ...Markup.inlineKeyboard([
-        [Markup.button.callback('➕ Akkaunt qo\'shish', 'add_account')]
-      ])
+      ...rawInline([[iBtn('➕ Akkaunt qo\'shish', 'add_account', 'success')]])
     });
   }
 
@@ -215,15 +197,13 @@ bot.start(async (ctx) => {
   );
 
   // ─── Referral: /start ref_<referrerId>_<...> ───────────────────────────────
-  const payload = ctx.startPayload; // masalan "ref_123456789_0"
+  const payload = ctx.startPayload;
   if (isNewUser && payload?.startsWith('ref_')) {
     const referrerId = parseInt(payload.split('_')[1], 10);
     if (referrerId && referrerId !== userId) {
       const already = await User.findOne({ userId });
       if (!already?.referredBy) {
         await User.findOneAndUpdate({ userId }, { referredBy: referrerId });
-        // Referral hisoblanishi uchun taklif qilingan foydalanuvchi obunani tasdiqlashi kerak —
-        // shuning uchun hozircha faqat referredBy saqlanadi, checkSubscription dan keyin +1 qilinadi
         ctx.session = ctx.session || {};
         ctx.session.pendingReferral = referrerId;
       }
@@ -238,7 +218,6 @@ bot.start(async (ctx) => {
     });
   }
 
-  // Obuna tasdiqlangan va referral kutilayotgan bo'lsa — referrerga +1 qo'shamiz
   const user = await User.findOne({ userId });
   if (user?.referredBy && !user.referralCounted) {
     await grantReferral(user.referredBy, ctx);
@@ -259,7 +238,6 @@ bot.action('check_sub', async (ctx) => {
   }
   try { await ctx.deleteMessage(); } catch {}
 
-  // Referral: obuna endi tasdiqlandi — kutilayotgan referralni hisoblaymiz
   const user = await User.findOne({ userId: ctx.from.id });
   if (user?.referredBy && !user.referralCounted) {
     await grantReferral(user.referredBy, ctx);
@@ -277,8 +255,7 @@ bot.action('main_menu',      async (ctx) => { ctx.answerCbQuery(); await showMai
 bot.action('profillar_menu', async (ctx) => { ctx.answerCbQuery(); await profillarHandler(ctx); });
 bot.action('guruhlar_menu',  async (ctx) => { ctx.answerCbQuery(); await guruhlarHandler(ctx); });
 
-// ─── AUTOHABAR — Boshqaruv paneli ───────────────────────────────────────────
-
+// ─── AUTOHABAR — Boshqaruv paneli ────────────────────────────────────────────
 async function buildControlPanel(ctx) {
   const userId = ctx.from.id;
   const acc    = await Account.findOne({ userId, isActive: true });
@@ -312,8 +289,6 @@ async function buildControlPanel(ctx) {
   const phoneDisplay    = acc ? `++${acc.phone.replace(/^\+/, '')}` : '❌';
   const usernameDisplay = ctx.from.username ? `(@${ctx.from.username})` : '';
 
-  // Legacy Markdown ishlatamiz — escaping talab qilmaydi (faqat _*`[ belgilar muammoli,
-  // ular yuqoridagi qiymatlarda yo'q).
   const text =
     `🧑‍💼 *Boshqaruv panel*\n` +
     `${'━'.repeat(18)}\n\n` +
@@ -326,18 +301,18 @@ async function buildControlPanel(ctx) {
     `📛 Mention: *${mentionOn ? 'Yoqiq' : 'O\'chiq'}*\n` +
     `${'━'.repeat(18)}`;
 
-  const kb = Markup.inlineKeyboard([
+  const kb = rawInline([
     [
       running
-        ? styledButton('🔴 To\'xtatish', 'autohabar_stop', 'danger')
-        : styledButton('🟢 Ishga tushurish', 'autohabar_start', 'success'),
-      styledButton('🔵 Statistika', 'autohabar_stats', 'primary')
+        ? iBtn('🔴 To\'xtatish', 'autohabar_stop', 'danger')
+        : iBtn('🟢 Ishga tushurish', 'autohabar_start', 'success'),
+      iBtn('🔵 Statistika', 'autohabar_stats', 'primary')
     ],
     [
-      styledButton('🟠 Avto-o\'chirish taymer', 'autohabar_autostop'),
-      styledButton(`🟣 Mention: ${mentionOn ? 'Yoqiq' : "O'chiq"}`, 'autohabar_mention', mentionOn ? 'success' : undefined)
+      iBtn('🟠 Avto-o\'chirish taymer', 'autohabar_autostop'),
+      iBtn(`🟣 Mention: ${mentionOn ? 'Yoqiq' : "O'chiq"}`, 'autohabar_mention', mentionOn ? 'success' : 'primary')
     ],
-    [styledButton('⚫️ Yopish', 'autohabar_close')]
+    [iBtn('⚫️ Yopish', 'autohabar_close')]
   ]);
 
   return { text, kb };
@@ -389,14 +364,14 @@ bot.action('autohabar_autostop', async (ctx) => {
     '⏱ *Avto-o\'chirish taymerini tanlang:*\n\nNecha marta yuborilgach avtomatik to\'xtasin?',
     {
       parse_mode: 'Markdown',
-      ...Markup.inlineKeyboard([
+      ...rawInline([
         [
-          Markup.button.callback('10 marta', 'autostop_10'),
-          Markup.button.callback('50 marta', 'autostop_50')
+          iBtn('10 marta', 'autostop_10', 'primary'),
+          iBtn('50 marta', 'autostop_50', 'primary')
         ],
         [
-          Markup.button.callback('100 marta', 'autostop_100'),
-          Markup.button.callback('♾ Cheksiz', 'autostop_0')
+          iBtn('100 marta', 'autostop_100', 'primary'),
+          iBtn('♾ Cheksiz', 'autostop_0', 'success')
         ]
       ])
     }
@@ -417,7 +392,7 @@ bot.action(/^autostop_(\d+)$/, async (ctx) => {
 
 bot.action('autohabar_mention', async (ctx) => {
   const userId = ctx.from.id;
-  await getEffectiveTarif(userId); // muddati o'tgan bo'lsa Free ga tushiradi
+  await getEffectiveTarif(userId);
 
   const user  = await User.findOne({ userId });
   const isPro = user?.tarif === 'pro';
@@ -472,7 +447,7 @@ bot.hears('🚀 Autohabar yuborish', async (ctx) => {
   const acc = await Account.findOne({ userId: ctx.from.id, isActive: true });
   if (!acc) {
     return ctx.reply('⚠️ Avval akkaunt qo\'shing!',
-      Markup.inlineKeyboard([[Markup.button.callback('➕ Akkaunt qo\'shish', 'add_account')]])
+      rawInline([[iBtn('➕ Akkaunt qo\'shish', 'add_account', 'success')]])
     );
   }
   await renderControlPanel(ctx, { edit: false });
@@ -489,7 +464,7 @@ function progressBar(current, total, size = 15) {
 
 async function showProTarif(ctx) {
   const userId = ctx.from.id;
-  await getEffectiveTarif(userId); // muddati o'tgan bo'lsa Free ga tushiradi
+  await getEffectiveTarif(userId);
   const user   = await User.findOne({ userId });
   const tarif  = user?.tarif === 'pro' ? 'Pro' : 'Free';
   const refCount = user?.referralCount || 0;
@@ -539,10 +514,10 @@ async function showProTarif(ctx) {
 
   await ctx.reply(text, {
     parse_mode: 'HTML',
-    ...Markup.inlineKeyboard([
+    ...rawInline([
       [
-        styledButton('🟢 Stars orqali sotib olish', 'pro_buy_stars', 'success'),
-        styledButton('🔵 Karta orqali sotib olish', 'pro_buy_card', 'primary')
+        iBtn('🟢 Stars orqali sotib olish', 'pro_buy_stars', 'success'),
+        iBtn('🔵 Karta orqali sotib olish', 'pro_buy_card', 'primary')
       ]
     ])
   });
@@ -557,10 +532,10 @@ bot.action('pro_buy_stars', async (ctx) => {
     '⭐ *Stars orqali to\'lov*\n\nKerakli muddatni tanlang:',
     {
       parse_mode: 'Markdown',
-      ...Markup.inlineKeyboard([
-        [Markup.button.callback('20 ⭐ / 1 kun', 'pay_stars_20')],
-        [Markup.button.callback('70 ⭐ / 7 kun', 'pay_stars_70')],
-        [Markup.button.callback('250 ⭐ / 30 kun', 'pay_stars_250')]
+      ...rawInline([
+        [iBtn('20 ⭐ / 1 kun', 'pay_stars_20', 'primary')],
+        [iBtn('70 ⭐ / 7 kun', 'pay_stars_70', 'primary')],
+        [iBtn('250 ⭐ / 30 kun', 'pay_stars_250', 'success')]
       ])
     }
   );
@@ -574,7 +549,7 @@ bot.action('pro_buy_card', async (ctx) => {
   );
 });
 
-// ─── STARS TARIFLARI: miqdor → (kun, tavsif) ─────────────────────────────────
+// ─── STARS TARIFLARI ──────────────────────────────────────────────────────────
 const STARS_PLANS = {
   20:  { days: 1,  label: '1 kunlik Pro' },
   70:  { days: 7,  label: '7 kunlik Pro' },
@@ -593,10 +568,9 @@ bot.action(/^pay_stars_(\d+)$/, async (ctx) => {
     await ctx.telegram.sendInvoice(ctx.chat.id, {
       title:          `AutoHabar Pro — ${plan.label}`,
       description:    `Pro tarifga o'tish: ${plan.days} kun davomida barcha Pro imkoniyatlar ochiladi.`,
-      // payload ichida userId va kun sonini kodlaymiz — to'lov tasdiqlanganda o'qiymiz
       payload:        `pro_${ctx.from.id}_${plan.days}_${Date.now()}`,
-      provider_token: '',       // Telegram Stars uchun bo'sh qoldiriladi
-      currency:       'XTR',    // Telegram Stars valyutasi
+      provider_token: '',
+      currency:       'XTR',
       prices:         [{ label: plan.label, amount }],
       start_parameter: `pro_${plan.days}d`
     });
@@ -606,7 +580,7 @@ bot.action(/^pay_stars_(\d+)$/, async (ctx) => {
   }
 });
 
-// ─── Pre-checkout — Telegram to'lovdan oldin tasdiq so'raydi ─────────────────
+// ─── Pre-checkout ─────────────────────────────────────────────────────────────
 bot.on('pre_checkout_query', async (ctx) => {
   try {
     await ctx.answerPreCheckoutQuery(true);
@@ -616,19 +590,18 @@ bot.on('pre_checkout_query', async (ctx) => {
   }
 });
 
-// ─── To'lov muvaffaqiyatli bo'lganda — Pro tarifni yoqamiz ───────────────────
+// ─── To'lov muvaffaqiyatli ────────────────────────────────────────────────────
 bot.on('message', async (ctx, next) => {
   const payment = ctx.message?.successful_payment;
   if (!payment) return next();
 
   try {
     const userId = ctx.from.id;
-    const parts  = payment.invoice_payload.split('_'); // ['pro', userId, days, ts]
+    const parts  = payment.invoice_payload.split('_');
     const days   = parseInt(parts[2], 10) || 30;
 
     const user = await User.findOne({ userId });
     const now  = new Date();
-    // Agar hali Pro muddati tugamagan bo'lsa — kunlar ustiga qo'shamiz, aks holda bugundan boshlab
     const base = (user?.proExpiresAt && user.proExpiresAt > now) ? user.proExpiresAt : now;
     const newExpiry = new Date(base.getTime() + days * 24 * 60 * 60 * 1000);
 
@@ -664,7 +637,7 @@ function daysAgo(date) {
 
 async function showKabinet(ctx) {
   const userId = ctx.from.id;
-  await getEffectiveTarif(userId); // muddati o'tgan bo'lsa Free ga tushiradi
+  await getEffectiveTarif(userId);
 
   const [user, acc, profileCount] = await Promise.all([
     User.findOne({ userId }),
@@ -675,7 +648,6 @@ async function showKabinet(ctx) {
   const isPro   = user?.tarif === 'pro';
   const interval = user?.interval || 300;
 
-  // Guruhlar soni
   let groupCount = 0;
   if (acc) {
     if ((user?.groupMode || 'all') === 'selected') {
@@ -688,7 +660,6 @@ async function showKabinet(ctx) {
     }
   }
 
-  // Bugungi hisoblagichni yangilab olamiz (kun almashgan bo'lsa 0 ko'rsatish uchun)
   const today = new Date().toISOString().slice(0, 10);
   const todaySent = (user?.todaySentDate === today) ? (user?.todaySentCount || 0) : 0;
 
@@ -710,9 +681,9 @@ async function showKabinet(ctx) {
     `💎 Premium: ${isPro ? `Pro (${user.proExpiresAt ? new Date(user.proExpiresAt).toLocaleDateString('uz-UZ') : '—'} gacha)` : "Pro yo'q"}\n` +
     `⏱ Interval: ${interval} soniya`;
 
-  const kb = Markup.inlineKeyboard([
-    [styledButton('🔴 Profilni uzish', 'kabinet_unlink', 'danger')],
-    [styledButton('⚫️ Yopish', 'kabinet_close')]
+  const kb = rawInline([
+    [iBtn('🔴 Profilni uzish', 'kabinet_unlink', 'danger')],
+    [iBtn('⚫️ Yopish', 'kabinet_close')]
   ]);
 
   if (ctx.callbackQuery) {
@@ -735,10 +706,10 @@ bot.action('kabinet_unlink', async (ctx) => {
     "⚠️ *Profilni uzishni tasdiqlaysizmi?*\n\nBu akkaunt o'chiriladi va autohabar to'xtatiladi.",
     {
       parse_mode: 'Markdown',
-      ...Markup.inlineKeyboard([
+      ...rawInline([
         [
-          styledButton('✅ Ha, uzish', 'kabinet_unlink_confirm', 'danger'),
-          styledButton('⚫️ Bekor qilish', 'kabinet_close')
+          iBtn('✅ Ha, uzish', 'kabinet_unlink_confirm', 'danger'),
+          iBtn('⚫️ Bekor qilish', 'kabinet_close')
         ]
       ])
     }
