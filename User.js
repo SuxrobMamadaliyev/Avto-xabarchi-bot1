@@ -18,6 +18,8 @@ const userSchema = new mongoose.Schema({
   // Referral / Pro
   referralCount: { type: Number, default: 0 },
   referredBy:    { type: Number, default: null },
+  referralCounted: { type: Boolean, default: false },
+  proExpiresAt:  { type: Date, default: null },
 
   lastSeen:  { type: Date, default: Date.now },
   createdAt: { type: Date, default: Date.now }
