@@ -15,6 +15,10 @@ const userSchema = new mongoose.Schema({
   sentCount:      { type: Number, default: 0 },         // joriy tsiklda necha marta yuborilgani
   mentionEnabled: { type: Boolean, default: false },    // guruhga @mention qo'shib yuborish
 
+  // Referral / Pro
+  referralCount: { type: Number, default: 0 },
+  referredBy:    { type: Number, default: null },
+
   lastSeen:  { type: Date, default: Date.now },
   createdAt: { type: Date, default: Date.now }
 });
