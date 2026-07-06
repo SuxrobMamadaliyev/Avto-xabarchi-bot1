@@ -1,17 +1,16 @@
-const { Scenes, Markup } = require('telegraf');
+const { Scenes } = require('telegraf');
 const { TelegramClient } = require('telegram');
 const { StringSession } = require('telegram/sessions');
 const { Api } = require('telegram');
+const { iBtn, rawInline } = require('./styledKb');
 const Account = require('./Account');
 const User    = require('./User');
 
 const API_ID   = parseInt(process.env.API_ID);
 const API_HASH = process.env.API_HASH;
 
-// ─── Tarif bo'yicha akkaunt limiti ────────────────────────────────────────────
 const ACCOUNT_LIMITS = { free: 1, pro: 5 };
 
-// Pro muddati o'tgan bo'lsa avtomatik Free ga tushiradi (bir joyda ham ishlatiladi)
 async function getEffectiveTarif(userId) {
   const user = await User.findOne({ userId });
   if (user?.tarif === 'pro' && user.proExpiresAt && user.proExpiresAt < new Date()) {
@@ -21,7 +20,6 @@ async function getEffectiveTarif(userId) {
   return user?.tarif === 'pro' ? 'pro' : 'free';
 }
 
-// Vaqtinchalik clientlar (scene davomida)
 const pendingClients = new Map();
 
 const addAccountScene = new Scenes.WizardScene(
@@ -45,7 +43,7 @@ const addAccountScene = new Scenes.WizardScene(
         {
           parse_mode: 'Markdown',
           ...(tarif === 'free'
-            ? Markup.inlineKeyboard([[Markup.button.callback('👑 Pro tarifga o\'tish', 'pro_tarif_menu')]])
+            ? rawInline([[iBtn('👑 Pro tarifga o\'tish', 'pro_tarif_menu', 'success')]])
             : {})
         }
       );
@@ -58,9 +56,7 @@ const addAccountScene = new Scenes.WizardScene(
       'Masalan: `+998901234567`',
       {
         parse_mode: 'Markdown',
-        ...Markup.inlineKeyboard([
-          [Markup.button.callback('❌ Bekor qilish', 'cancel_add')]
-        ])
+        ...rawInline([[iBtn('❌ Bekor qilish', 'cancel_add', 'danger')]])
       }
     );
     return ctx.wizard.next();
@@ -87,7 +83,7 @@ const addAccountScene = new Scenes.WizardScene(
 
     const loadingMsg = await ctx.reply('⏳ Ulanilmoqda...');
 
-    let client; // catch blokida ham ishlatiladi, shuning uchun tashqarida e'lon qilinadi
+    let client;
     try {
       client = new TelegramClient(
         new StringSession(''),
@@ -98,10 +94,6 @@ const addAccountScene = new Scenes.WizardScene(
 
       await client.connect();
 
-      // forceSMS: false — GramJS "forceSMS: true" bo'lsa ichkarida avtomatik
-      // auth.ResendCode chaqiradi va ba'zi raqamlarda shu resend
-      // "406: SEND_CODE_UNAVAILABLE" bilan tushib qoladi. Shu sabab Telegram
-      // o'zi tanlagan standart usulda (odatda ilova ichidan) yuboramiz.
       const result = await client.sendCode(
         { apiId: API_ID, apiHash: API_HASH },
         phone,
@@ -133,17 +125,17 @@ const addAccountScene = new Scenes.WizardScene(
       try { await ctx.telegram.deleteMessage(ctx.chat.id, loadingMsg.message_id); } catch {}
       try { await client.disconnect(); } catch {}
 
-      let msg = `❌ Xatolik: ${err.message}`; // vaqtincha: aniq xatoni ko'rsatamiz (debug uchun)
-      if (err.message.includes('PHONE_NUMBER_INVALID')) msg = '❌ Telefon raqam noto\'g\'ri!';
-      if (err.message.includes('PHONE_NUMBER_BANNED'))  msg = '❌ Bu raqam ban yegan!';
-      if (err.message.includes('API_ID_INVALID'))       msg = '❌ API sozlamalarida xato. Adminga murojaat qiling.';
+      let msg = `❌ Xatolik: ${err.message}`;
+      if (err.message.includes('PHONE_NUMBER_INVALID'))    msg = '❌ Telefon raqam noto\'g\'ri!';
+      if (err.message.includes('PHONE_NUMBER_BANNED'))     msg = '❌ Bu raqam ban yegan!';
+      if (err.message.includes('API_ID_INVALID'))          msg = '❌ API sozlamalarida xato. Adminga murojaat qiling.';
       if (err.message.includes('SEND_CODE_UNAVAILABLE')) {
         msg = '❌ Bu raqamga hozir kod yuborib bo\'lmadi (Telegram vaqtincha rad etdi).\n\n' +
               'Bir necha daqiqadan so\'ng qayta urinib ko\'ring, yoki boshqa raqam bilan sinab ko\'ring.';
       }
       if (err.message.includes('FLOOD_WAIT')) {
         const seconds = err.message.match(/FLOOD_WAIT_(\d+)/)?.[1] || '?';
-        msg = `⏳ Juda ko'p urinish qildingiz. Telegram ${seconds} soniyaga bloklagan. Shuncha vaqtdan keyin qayta urinib ko'ring.`;
+        msg = `⏳ Juda ko'p urinish qildingiz. Telegram ${seconds} soniyaga bloklagan.`;
       }
 
       await ctx.reply(msg);
@@ -278,9 +270,7 @@ async function saveAccount(ctx, client, phone) {
     '🟢 Holat: Faol',
     {
       parse_mode: 'Markdown',
-      ...Markup.inlineKeyboard([
-        [Markup.button.callback('🏠 Bosh menyuga', 'main_menu')]
-      ])
+      ...rawInline([[iBtn('🏠 Bosh menyuga', 'main_menu', 'success')]])
     }
   );
 }
@@ -293,6 +283,5 @@ addAccountScene.action('cancel_add', async (ctx) => {
 });
 
 module.exports = addAccountScene;
-
 module.exports.getEffectiveTarif = getEffectiveTarif;
 module.exports.ACCOUNT_LIMITS = ACCOUNT_LIMITS;
