@@ -356,12 +356,95 @@ bot.hears('⏱ Interval',            intervalHandler);
 bot.hears('💬 Guruhlarni sozlash', guruhlarHandler);
 bot.hears('👤 Profillar',          profillarHandler);
 
-bot.hears('👑 Pro tarif', (ctx) =>
-  ctx.reply(
-    '👑 *Pro Tarif*\n\n✅ Cheksiz guruhlar\n✅ Tez interval\n✅ Ko\'p akkaunt\n✅ Forward\n\n💰 Narx: So\'rov asosida',
+function progressBar(current, total, size = 15) {
+  const filled = Math.min(size, Math.round((current / total) * size));
+  return '█'.repeat(filled) + '░'.repeat(size - filled);
+}
+
+bot.hears('👑 Pro tarif', async (ctx) => {
+  const userId = ctx.from.id;
+  const user   = await User.findOne({ userId });
+  const tarif  = user?.tarif === 'pro' ? 'Pro' : 'Free';
+  const refCount = user?.referralCount || 0;
+  const refGoal  = 15;
+
+  const botUsername = ctx.botInfo?.username || 'Autoxabarcbot';
+  const refLink = `https://t.me/${botUsername}?start=ref_${userId}_0`;
+
+  const text =
+    `💎 <b>AutoHabar Pro</b>\n\n` +
+    `🔋 ${tarif === 'Pro' ? '✅' : '❌'} Siz <b>${tarif}</b> tarifdasiz\n\n` +
+    `<blockquote expandable>` +
+    `🚀 <b>Pro imkoniyatlari:</b>\n\n` +
+    `👤 Ko'p profil: 5 tagacha akkaunt\n` +
+    `❗️ Watermarksiz (reklama belgisi yo'q)\n` +
+    `🔍 Reklamasiz (toza interfeys)\n` +
+    `➡️ Forward xabar yuborish\n` +
+    `🖼 Har profil uchun mustaqil sozlamalar\n` +
+    `⚙️ Tugmali xabar (Inline mode)\n` +
+    `⏰ Tezkor tsikl va minimal kechikish\n` +
+    `🔀 Turli habarlar (2\u20134 xil, navbatma-navbat)\n` +
+    `⚙️ Mention — guruh a'zolarini @ qilish\n` +
+    `🖼 Avtomatik obuna (AutoSub) — kanallarni topib obuna bo'lish` +
+    `</blockquote>\n\n` +
+    `<blockquote expandable>` +
+    `⭐ <b>Narxlar:</b>\n` +
+    `• Karta: 35,000 so'm / 30 kun\n` +
+    `⭐ Stars: 20 / 1 kun\n` +
+    `⭐ Stars: 70 / 7 kun\n` +
+    `⭐ Stars: 250 / 30 kun\n` +
+    `💵 USDT: 0.40 / 1 kun\n` +
+    `💵 USDT: 1.20 / 7 kun\n` +
+    `💵 USDT: 5.00 / 30 kun` +
+    `</blockquote>\n\n` +
+    `<blockquote expandable>` +
+    `🎁 <b>Bepul PRO olish:</b>\n\n` +
+    `Botga <b>${refGoal} ta</b> do'stingizni taklif qiling va <b>bepulga 7 kunlik PRO</b> oling!\n` +
+    `Do'stlaringiz barcha kanallarga obuna bo'lishlari zarur! ✅\n\n` +
+    `📊 Holat: ${refCount}/${refGoal}\n` +
+    `[${progressBar(refCount, refGoal)}]\n\n` +
+    `🔗 Havolangiz:\n${refLink}` +
+    `</blockquote>`;
+
+  await ctx.reply(text, {
+    parse_mode: 'HTML',
+    ...Markup.inlineKeyboard([
+      [
+        Markup.button.callback('⭐ Stars orqali sotib olish', 'pro_buy_stars'),
+        Markup.button.callback('💳 Karta orqali sotib olish', 'pro_buy_card')
+      ]
+    ])
+  });
+});
+
+bot.action('pro_buy_stars', async (ctx) => {
+  await ctx.answerCbQuery();
+  await ctx.reply(
+    '⭐ *Stars orqali to\'lov*\n\nKerakli muddatni tanlang:',
+    {
+      parse_mode: 'Markdown',
+      ...Markup.inlineKeyboard([
+        [Markup.button.callback('20 ⭐ / 1 kun', 'pay_stars_20')],
+        [Markup.button.callback('70 ⭐ / 7 kun', 'pay_stars_70')],
+        [Markup.button.callback('250 ⭐ / 30 kun', 'pay_stars_250')]
+      ])
+    }
+  );
+});
+
+bot.action('pro_buy_card', async (ctx) => {
+  await ctx.answerCbQuery();
+  await ctx.reply(
+    '💳 *Karta orqali to\'lov*\n\n35,000 so\'m / 30 kun\n\n📞 To\'lov uchun admin bilan bog\'laning: @admin',
     { parse_mode: 'Markdown' }
-  )
-);
+  );
+});
+
+bot.action(/^pay_stars_(\d+)$/, async (ctx) => {
+  await ctx.answerCbQuery();
+  const amount = ctx.match[1];
+  await ctx.reply(`⭐ ${amount} Stars uchun to\'lov tez orada ishga tushadi (Telegram Stars API).`);
+});
 
 bot.hears('🗂 Kabinet', async (ctx) => {
   const count = await Account.countDocuments({ userId: ctx.from.id });
