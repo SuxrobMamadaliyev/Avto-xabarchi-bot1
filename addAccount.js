@@ -3,9 +3,23 @@ const { TelegramClient } = require('telegram');
 const { StringSession } = require('telegram/sessions');
 const { Api } = require('telegram');
 const Account = require('./Account');
+const User    = require('./User');
 
 const API_ID   = parseInt(process.env.API_ID);
 const API_HASH = process.env.API_HASH;
+
+// ─── Tarif bo'yicha akkaunt limiti ────────────────────────────────────────────
+const ACCOUNT_LIMITS = { free: 1, pro: 5 };
+
+// Pro muddati o'tgan bo'lsa avtomatik Free ga tushiradi (bir joyda ham ishlatiladi)
+async function getEffectiveTarif(userId) {
+  const user = await User.findOne({ userId });
+  if (user?.tarif === 'pro' && user.proExpiresAt && user.proExpiresAt < new Date()) {
+    await User.findOneAndUpdate({ userId }, { tarif: 'free' });
+    return 'free';
+  }
+  return user?.tarif === 'pro' ? 'pro' : 'free';
+}
 
 // Vaqtinchalik clientlar (scene davomida)
 const pendingClients = new Map();
@@ -15,6 +29,29 @@ const addAccountScene = new Scenes.WizardScene(
 
   // ── STEP 1: Telefon raqam so'rash ─────────────────────────────────────────
   async (ctx) => {
+    const userId = ctx.from.id;
+    const tarif  = await getEffectiveTarif(userId);
+    const limit  = ACCOUNT_LIMITS[tarif];
+    const count  = await Account.countDocuments({ userId });
+
+    if (count >= limit) {
+      await ctx.reply(
+        `⚠️ *Akkaunt limiti to'ldi!*\n\n` +
+        `📱 Sizda hozir: ${count}/${limit} akkaunt\n` +
+        `💎 Tarifingiz: ${tarif === 'pro' ? 'Pro' : 'Free'}\n\n` +
+        (tarif === 'free'
+          ? `Ko'proq akkaunt ulash uchun Pro tarifga o'ting (5 tagacha akkaunt).`
+          : `Pro tarifda maksimal 5 ta akkaunt ulash mumkin.`),
+        {
+          parse_mode: 'Markdown',
+          ...(tarif === 'free'
+            ? Markup.inlineKeyboard([[Markup.button.callback('👑 Pro tarifga o\'tish', 'pro_tarif_menu')]])
+            : {})
+        }
+      );
+      return ctx.scene.leave();
+    }
+
     await ctx.reply(
       '📲 *Akkaunt ulash*\n\n' +
       'Telefon raqamingizni kiriting:\n\n' +
@@ -256,3 +293,6 @@ addAccountScene.action('cancel_add', async (ctx) => {
 });
 
 module.exports = addAccountScene;
+
+module.exports.getEffectiveTarif = getEffectiveTarif;
+module.exports.ACCOUNT_LIMITS = ACCOUNT_LIMITS;
