@@ -1,7 +1,7 @@
-const { Markup } = require('telegraf');
 const { Scenes } = require('telegraf');
 const { TelegramClient } = require('telegram');
 const { StringSession }  = require('telegram/sessions');
+const { iBtn, rawInline } = require('./styledKb');
 
 const Account = require('./Account');
 const User    = require('./User');
@@ -20,7 +20,6 @@ async function fetchLiveGroups(account) {
   let dialogs = [];
   try {
     await client.connect();
-    // getDialogs bir so'rovda keladi — iterDialogs dan 10-20x tez
     dialogs = await client.getDialogs({ limit: 200 });
   } finally {
     try { await client.disconnect(); } catch {}
@@ -67,13 +66,12 @@ async function guruhlarHandler(ctx) {
     const account = await Account.findOne({ userId, isActive: true });
     if (!account) {
       const text = '⚠️ *Avval akkaunt ulang!*';
-      const kb   = Markup.inlineKeyboard([[Markup.button.callback('➕ Akkaunt qo\'shish', 'add_account')]]);
+      const kb   = rawInline([[iBtn('➕ Akkaunt qo\'shish', 'add_account', 'success')]]);
       return ctx.callbackQuery
         ? ctx.editMessageText(text, { parse_mode: 'Markdown', ...kb }).catch(() => ctx.reply(text, { parse_mode: 'Markdown', ...kb }))
         : ctx.reply(text, { parse_mode: 'Markdown', ...kb });
     }
 
-    // Darhol "Yuklanmoqda" xabarini yuboramiz — foydalanuvchi kutmaydi
     const sent = await ctx.reply('⏳ Guruhlar yuklanmoqda...');
 
     let groups = [];
@@ -84,7 +82,6 @@ async function guruhlarHandler(ctx) {
       errText = err.message;
     }
 
-    // Loading xabarini o'chiramiz
     await ctx.telegram.deleteMessage(ctx.chat.id, sent.message_id).catch(() => {});
 
     if (errText) {
@@ -92,9 +89,9 @@ async function guruhlarHandler(ctx) {
         `❌ *Guruhlarni yuklashda xato:*\n\`${errText}\``,
         {
           parse_mode: 'Markdown',
-          ...Markup.inlineKeyboard([
-            [Markup.button.callback('🔄 Qayta urinish', 'guruhlar_menu')],
-            [Markup.button.callback('⬅️ Orqaga', 'main_menu')]
+          ...rawInline([
+            [iBtn('🔄 Qayta urinish', 'guruhlar_menu', 'primary')],
+            [iBtn('⬅️ Orqaga',       'main_menu')]
           ])
         }
       );
@@ -163,7 +160,11 @@ async function showGroupList(ctx, page = 0, { groups = null, forceRefresh = fals
 
   // Tanlash rejimi tugmasi
   rows.push([
-    Markup.button.callback(mode === 'selected' ? '☑️ Tanlash ✓' : '☑️ Tanlash', 'group_mode_select')
+    iBtn(
+      mode === 'selected' ? '☑️ Tanlash ✓' : '☑️ Tanlash',
+      'group_mode_select',
+      mode === 'selected' ? 'success' : 'primary'
+    )
   ]);
 
   // Guruh tugmalari
@@ -173,14 +174,22 @@ async function showGroupList(ctx, page = 0, { groups = null, forceRefresh = fals
     rows.push(row);
   }
 
-  // Quyi tugmalar
-  rows.push([
-    Markup.button.callback('☑️ Hammasini tanlash', `gsa:${page}`),
-    Markup.button.callback(`💾 Saqlash (${selCount})`, `gsv:${page}`)
-  ]);
-  rows.push([Markup.button.callback('⬅️ Orqaga', 'main_menu')]);
+  // Navigatsiya (sahifalar)
+  if (totalPages > 1) {
+    const navRow = [];
+    if (page > 0)              navRow.push(iBtn('◀️', `gpg:${page - 1}`, 'primary'));
+    if (page < totalPages - 1) navRow.push(iBtn('▶️', `gpg:${page + 1}`, 'primary'));
+    if (navRow.length) rows.push(navRow);
+  }
 
-  const kb = Markup.inlineKeyboard(rows);
+  // Pastki tugmalar
+  rows.push([
+    iBtn('☑️ Hammasini tanlash', `gsa:${page}`, 'primary'),
+    iBtn(`💾 Saqlash (${selCount})`, `gsv:${page}`, 'success')
+  ]);
+  rows.push([iBtn('⬅️ Orqaga', 'main_menu')]);
+
+  const kb = rawInline(rows);
 
   if (edit) {
     try { return await ctx.editMessageText(header, { parse_mode: 'Markdown', ...kb }); } catch {}
@@ -189,26 +198,26 @@ async function showGroupList(ctx, page = 0, { groups = null, forceRefresh = fals
 }
 
 function btnFor(g, selectedSet, page) {
-  return Markup.button.callback(
-    `${selectedSet.has(g.groupId) ? '✔️' : '➕'} ${trunc(g.groupName, 22)}`,
-    `tgl:${g.groupId}:${page}`
+  const selected = selectedSet.has(g.groupId);
+  return iBtn(
+    `${selected ? '✔️' : '➕'} ${trunc(g.groupName, 22)}`,
+    `tgl:${g.groupId}:${page}`,
+    selected ? 'success' : undefined
   );
 }
+
 function trunc(s, n) {
   if (!s) return '';
-  // Emoji surrogate pair yoki boshqa maxsus belgilarni saqlab, kod-nuqta bo'yicha kesamiz
-  const chars = Array.from(s); // har bir belgi (emoji ham) to'g'ri hisoblanadi
+  const chars = Array.from(s);
   if (chars.length <= n) return sanitize(s);
   return sanitize(chars.slice(0, n - 1).join('')) + '…';
 }
 
-// Telegram inline tugma matni uchun xavfsizlashtirish:
-// lone-surrogate va boshqa noto'g'ri belgilarni olib tashlaydi
 function sanitize(str) {
   return String(str)
-    .replace(/[\u0000-\u001F\u007F]/g, '')       // control belgilar
-    .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g, '') // yolg'iz high surrogate
-    .replace(/(?:[^\uD800-\uDBFF]|^)[\uDC00-\uDFFF]/g, m => m.length > 1 ? m : '') // yolg'iz low surrogate
+    .replace(/[\u0000-\u001F\u007F]/g, '')
+    .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g, '')
+    .replace(/(?:[^\uD800-\uDBFF]|^)[\uDC00-\uDFFF]/g, m => m.length > 1 ? m : '')
     .trim() || 'Nomsiz guruh';
 }
 
@@ -264,8 +273,6 @@ async function groupSyncAction(ctx) {
   await showGroupList(ctx, 0, { forceRefresh: true, edit: true });
 }
 
-// ─── Foydalanuvchi yangi guruhga qo'shilganda (gramjs account) ───────────────
-// Bot guruhga qo'shilsa — foydalanuvchiga xabar, cache tozalanadi
 async function onBotAddedToGroup(ctx) {
   if (!['group', 'supergroup'].includes(ctx.chat?.type)) return;
   if (ctx.myChatMember?.new_chat_member?.status !== 'member' &&
@@ -274,7 +281,6 @@ async function onBotAddedToGroup(ctx) {
   const chatTitle = ctx.chat.title || 'Noma\'lum';
   const chatId    = String(ctx.chat.id);
 
-  // Admin bo'lgan foydalanuvchilarga xabar yuboramiz
   try {
     const admins = await ctx.telegram.getChatAdministrators(ctx.chat.id);
     for (const adm of admins) {
@@ -282,8 +288,6 @@ async function onBotAddedToGroup(ctx) {
       const acc = await Account.findOne({ userId: adm.user.id, isActive: true });
       if (!acc) continue;
 
-      // Cache ni tozalaymiz — keyingi ochilganda yangi guruh ham ko'rinadi
-      // (session bazali, shuning uchun faqat log qilamiz)
       console.log(`[guruhlar] Yangi guruh: ${chatTitle} (${chatId}) — userId:${adm.user.id}`);
 
       await ctx.telegram.sendMessage(
@@ -295,7 +299,6 @@ async function onBotAddedToGroup(ctx) {
   } catch {}
 }
 
-// Dummy scene (add_group_manual olib tashlandi)
 const addGroupScene = new Scenes.WizardScene('ADD_GROUP', ctx => ctx.scene.leave());
 
 module.exports = {
