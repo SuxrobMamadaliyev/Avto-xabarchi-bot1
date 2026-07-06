@@ -1,6 +1,12 @@
 const { Markup } = require('telegraf');
 const Account = require('./Account');
 
+// ─── Bot API 9.4 (2026-02-09): tugmalarga rang ───────────────────────────────
+function styledButton(text, callback_data, style) {
+  const btn = Markup.button.callback(text, callback_data);
+  return style ? { ...btn, style } : btn;
+}
+
 async function profillarHandler(ctx) {
   const accounts = await Account.find({ userId: ctx.from.id });
 
@@ -11,8 +17,8 @@ async function profillarHandler(ctx) {
       {
         parse_mode: 'Markdown',
         ...Markup.inlineKeyboard([
-          [Markup.button.callback('➕ Yangi profil qo\'shish', 'add_account')],
-          [Markup.button.callback('⬅️ Orqaga', 'main_menu')]
+          [styledButton('➕ Yangi profil qo\'shish', 'add_account', 'success')],
+          [styledButton('⬅️ Orqaga', 'main_menu', 'danger')]
         ])
       }
     );
@@ -20,15 +26,16 @@ async function profillarHandler(ctx) {
   }
 
   // Akkauntlar ro'yxati
-  const buttons = accounts.map((acc, i) => [
-    Markup.button.callback(
+  const buttons = accounts.map((acc) => [
+    styledButton(
       `${acc.isActive ? '🟢' : '🔴'} ${acc.phone}`,
-      `profile_detail_${acc._id}`
+      `profile_detail_${acc._id}`,
+      acc.isActive ? 'success' : 'danger'
     )
   ]);
 
-  buttons.push([Markup.button.callback('➕ Yangi profil qo\'shish', 'add_account')]);
-  buttons.push([Markup.button.callback('⬅️ Orqaga', 'main_menu')]);
+  buttons.push([styledButton('➕ Yangi profil qo\'shish', 'add_account', 'success')]);
+  buttons.push([styledButton('⬅️ Orqaga', 'main_menu', 'danger')]);
 
   await ctx.reply(
     '👥 *Profillar*\n\n' +
@@ -59,13 +66,14 @@ async function profileDetailAction(ctx) {
       parse_mode: 'Markdown',
       ...Markup.inlineKeyboard([
         [
-          Markup.button.callback(
+          styledButton(
             acc.isActive ? '🔴 O\'chirish' : '🟢 Yoqish',
-            `profile_toggle_${acc._id}`
+            `profile_toggle_${acc._id}`,
+            acc.isActive ? 'danger' : 'success'
           )
         ],
-        [Markup.button.callback('🗑 O\'chirish', `profile_delete_${acc._id}`)],
-        [Markup.button.callback('⬅️ Orqaga', 'profillar_menu')]
+        [styledButton('🗑 O\'chirish', `profile_delete_${acc._id}`, 'danger')],
+        [styledButton('⬅️ Orqaga', 'profillar_menu')]
       ])
     }
   );
@@ -98,11 +106,10 @@ async function profileDeleteAction(ctx) {
   if (!deleted) return ctx.answerCbQuery('❌ Topilmadi', { show_alert: true });
   await ctx.answerCbQuery('🗑 Profil o\'chirildi!', { show_alert: true });
 
-  // Profillar ro'yxatiga qaytish
   await ctx.editMessageText(
     '🗑 Profil muvaffaqiyatli o\'chirildi.',
     Markup.inlineKeyboard([
-      [Markup.button.callback('⬅️ Profillarga qaytish', 'profillar_menu')]
+      [styledButton('⬅️ Profillarga qaytish', 'profillar_menu')]
     ])
   );
 }
