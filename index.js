@@ -162,37 +162,154 @@ bot.action('main_menu',      async (ctx) => { ctx.answerCbQuery(); await showMai
 bot.action('profillar_menu', async (ctx) => { ctx.answerCbQuery(); await profillarHandler(ctx); });
 bot.action('guruhlar_menu',  async (ctx) => { ctx.answerCbQuery(); await guruhlarHandler(ctx); });
 
-// ─── AUTOHABAR YOQISH/O'CHIRISH (inline) ────────────────────────────────────
-bot.action('autohabar_start', async (ctx) => {
-  await ctx.answerCbQuery();
+// ─── AUTOHABAR — Boshqaruv paneli ───────────────────────────────────────────
+
+async function buildControlPanel(ctx) {
   const userId = ctx.from.id;
+  const acc    = await Account.findOne({ userId, isActive: true });
+  const user   = await User.findOne({ userId });
+  const { MsgSettings } = require('./habarMatni');
+  const msg    = await MsgSettings.findOne({ userId });
+
+  const running    = !!(user?.isRunning || isRunning(userId));
+  const groupMode  = user?.groupMode || 'all';
+  const interval   = user?.interval  || 300;
+  const autoStop   = user?.autoStopLimit;
+  const mentionOn  = !!user?.mentionEnabled;
+
+  let groupCount = 0;
+  if (acc) {
+    if (groupMode === 'selected') {
+      groupCount = user?.selectedGroups?.length || 0;
+    } else {
+      try {
+        const { fetchLiveGroups } = require('./guruhlar');
+        const groups = await fetchLiveGroups(acc);
+        groupCount = groups.length;
+      } catch { groupCount = 0; }
+    }
+  }
+
+  const msgType = msg?.type === 'photo' ? 'Rasm+matn'
+                : msg?.type === 'button' ? 'Tugmali matn'
+                : msg?.text ? 'Matn' : 'Sozlanmagan';
+
+  const phoneDisplay    = acc ? `++${acc.phone.replace(/^\+/, '')}` : '❌';
+  const usernameDisplay = ctx.from.username ? `(@${ctx.from.username})` : '';
+
+  // Legacy Markdown ishlatamiz — escaping talab qilmaydi (faqat _*`[ belgilar muammoli,
+  // ular yuqoridagi qiymatlarda yo'q).
+  const text =
+    `🧑‍💼 *Boshqaruv panel*\n` +
+    `${'━'.repeat(18)}\n\n` +
+    `👤 Profil: ${phoneDisplay} ${usernameDisplay}\n` +
+    `⚙️ Holat: ${running ? '🟢 Yoqiq' : '🔴 O\'chiq'}\n` +
+    `🖼 Xabar turi: *${msgType}*\n` +
+    `💬 Guruhlar: *${groupCount}*\n` +
+    `⏳ Interval: *${interval} soniya*\n` +
+    `⏱ Avto-o'chish: ${autoStop ? `*${autoStop} marta*` : '♾ *Cheksiz*'}\n` +
+    `📛 Mention: *${mentionOn ? 'Yoqiq' : 'O\'chiq'}*\n` +
+    `${'━'.repeat(18)}`;
+
+  const kb = Markup.inlineKeyboard([
+    [
+      running
+        ? Markup.button.callback('⏸ To\'xtatish', 'autohabar_stop')
+        : Markup.button.callback('▶️ Ishga tushurish', 'autohabar_start'),
+      Markup.button.callback('🔴 Statistika', 'autohabar_stats')
+    ],
+    [
+      Markup.button.callback('⏱ Avto-o\'chirish taymer', 'autohabar_autostop'),
+      Markup.button.callback(`💬 Mention: ${mentionOn ? 'Yoqiq' : "O'chiq"}`, 'autohabar_mention')
+    ],
+    [Markup.button.callback('⬅️ Yopish', 'autohabar_close')]
+  ]);
+
+  return { text, kb };
+}
+
+async function renderControlPanel(ctx, { edit = false } = {}) {
+  const { text, kb } = await buildControlPanel(ctx);
+  const opts = { parse_mode: 'Markdown', ...kb };
+  if (edit) {
+    try { return await ctx.editMessageText(text, opts); } catch { return ctx.reply(text, opts); }
+  }
+  return ctx.reply(text, opts);
+}
+
+bot.action('autohabar_start', async (ctx) => {
+  await ctx.answerCbQuery('▶️ Ishga tushirilmoqda...');
+  const userId = ctx.from.id;
+
+  const acc = await Account.findOne({ userId, isActive: true });
+  if (!acc) return ctx.answerCbQuery('❌ Avval akkaunt qo\'shing!', { show_alert: true });
+
+  const { MsgSettings } = require('./habarMatni');
+  const msg = await MsgSettings.findOne({ userId });
+  if (!msg?.text) return ctx.answerCbQuery('❌ Avval habar matnini kiriting!', { show_alert: true });
+
   await startAutoSend(userId, bot);
-  await ctx.editMessageText(
-    '🟢 *Autohabar yoqildi!*\n\nBot guruhlaringizga xabar yuborishni boshladi.',
+  await renderControlPanel(ctx, { edit: true });
+});
+
+bot.action('autohabar_stop', async (ctx) => {
+  await ctx.answerCbQuery('⏸ To\'xtatildi');
+  await stopAutoSend(ctx.from.id);
+  await renderControlPanel(ctx, { edit: true });
+});
+
+bot.action('autohabar_stats', async (ctx) => {
+  await ctx.answerCbQuery();
+  const user = await User.findOne({ userId: ctx.from.id });
+  await ctx.answerCbQuery(
+    `📊 Yuborilgan: ${user?.sentCount || 0} marta`,
+    { show_alert: true }
+  );
+});
+
+bot.action('autohabar_autostop', async (ctx) => {
+  await ctx.answerCbQuery();
+  await ctx.reply(
+    '⏱ *Avto-o\'chirish taymerini tanlang:*\n\nNecha marta yuborilgach avtomatik to\'xtasin?',
     {
       parse_mode: 'Markdown',
       ...Markup.inlineKeyboard([
-        [Markup.button.callback('🔴 To\'xtatish', 'autohabar_stop')],
-        [Markup.button.callback('⬅️ Orqaga', 'main_menu')]
+        [
+          Markup.button.callback('10 marta', 'autostop_10'),
+          Markup.button.callback('50 marta', 'autostop_50')
+        ],
+        [
+          Markup.button.callback('100 marta', 'autostop_100'),
+          Markup.button.callback('♾ Cheksiz', 'autostop_0')
+        ]
       ])
     }
   );
 });
 
-bot.action('autohabar_stop', async (ctx) => {
-  await ctx.answerCbQuery();
-  const userId = ctx.from.id;
-  await stopAutoSend(userId);
-  await ctx.editMessageText(
-    '🔴 *Autohabar to\'xtatildi.*\n\nYuborish to\'xtatildi.',
-    {
-      parse_mode: 'Markdown',
-      ...Markup.inlineKeyboard([
-        [Markup.button.callback('🟢 Yoqish', 'autohabar_start')],
-        [Markup.button.callback('⬅️ Orqaga', 'main_menu')]
-      ])
-    }
+bot.action(/^autostop_(\d+)$/, async (ctx) => {
+  const val = parseInt(ctx.match[1], 10);
+  await User.findOneAndUpdate(
+    { userId: ctx.from.id },
+    { autoStopLimit: val === 0 ? null : val },
+    { upsert: true }
   );
+  await ctx.answerCbQuery(val === 0 ? '♾ Cheksiz qilib qo\'yildi' : `⏱ ${val} martaga o'rnatildi`);
+  try { await ctx.deleteMessage(); } catch {}
+  await renderControlPanel(ctx, { edit: false });
+});
+
+bot.action('autohabar_mention', async (ctx) => {
+  const user = await User.findOne({ userId: ctx.from.id });
+  const newVal = !user?.mentionEnabled;
+  await User.findOneAndUpdate({ userId: ctx.from.id }, { mentionEnabled: newVal }, { upsert: true });
+  await ctx.answerCbQuery(newVal ? '📛 Mention yoqildi' : '📛 Mention o\'chirildi');
+  await renderControlPanel(ctx, { edit: true });
+});
+
+bot.action('autohabar_close', async (ctx) => {
+  await ctx.answerCbQuery();
+  try { await ctx.deleteMessage(); } catch {}
 });
 
 // Interval actions
@@ -224,55 +341,16 @@ bot.action(/^profile_delete_/, profileDeleteAction);
 
 // ─── KEYBOARD HEARS ───────────────────────────────────────────────────────────
 
-// 🚀 AUTOHABAR — to'liq implement qilindi
+// 🚀 AUTOHABAR — Boshqaruv paneli
 bot.hears('🚀 Autohabar yuborish', async (ctx) => {
-  const userId = ctx.from.id;
-
-  const acc = await Account.findOne({ userId, isActive: true });
+  const acc = await Account.findOne({ userId: ctx.from.id, isActive: true });
   if (!acc) {
     return ctx.reply('⚠️ Avval akkaunt qo\'shing!',
       Markup.inlineKeyboard([[Markup.button.callback('➕ Akkaunt qo\'shish', 'add_account')]])
     );
   }
-
-  const { MsgSettings } = require('./habarMatni');
-  const { Group }       = require('./guruhlar');
-
-  const [user, msg, groupCount] = await Promise.all([
-    User.findOne({ userId }),
-    MsgSettings.findOne({ userId }),
-    Group.countDocuments({ userId })
-  ]);
-
-  const running     = user?.isRunning || isRunning(userId);
-  const groupMode   = user?.groupMode || 'all';
-  const interval    = user?.interval  || 300;
-  const selectedCount = await Group.countDocuments({ userId, selected: true });
-
-  const statusText =
-    `🚀 *Autohabar yuborish*\n` +
-    `${'━'.repeat(22)}\n\n` +
-    `📋 Holat: ${running ? '🟢 Yoqiq' : '🔴 O\'chiq'}\n` +
-    `💬 Guruhlar: ${groupMode === 'all' ? `Hammasi (${groupCount} ta)` : `Tanlangan (${selectedCount} ta)`}\n` +
-    `⏱ Interval: ${interval >= 3600 ? `${interval/3600} soat` : `${interval/60} daqiqa`}\n` +
-    `📝 Habar: ${msg?.text ? `"${msg.text.slice(0, 25)}..."` : '❌ Sozlanmagan'}\n\n` +
-    (running
-      ? '✅ Autohabar hozir ishlaydi. To\'xtatish uchun tugmani bosing.'
-      : '▶️ Boshlash uchun "Yoqish" tugmasini bosing.');
-
-  const kb = running
-    ? Markup.inlineKeyboard([
-        [Markup.button.callback('🔴 To\'xtatish', 'autohabar_stop')],
-        [Markup.button.callback('⬅️ Orqaga', 'main_menu')]
-      ])
-    : Markup.inlineKeyboard([
-        [Markup.button.callback('🟢 Yoqish', 'autohabar_start')],
-        [Markup.button.callback('⬅️ Orqaga', 'main_menu')]
-      ]);
-
-  await ctx.reply(statusText, { parse_mode: 'Markdown', ...kb });
+  await renderControlPanel(ctx, { edit: false });
 });
-
 bot.hears('✏️ Habar matni',        habarMatniHandler);
 bot.hears('⏱ Interval',            intervalHandler);
 bot.hears('💬 Guruhlarni sozlash', guruhlarHandler);
