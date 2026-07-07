@@ -31,7 +31,7 @@ async function grantReferral(referrerId, ctx) {
 
 const { intervalHandler, setIntervalAction, intervalInfoAction, intervalManualScene } = require('./interval');
 const { guruhlarHandler, groupModeAllAction, groupModeSelectAction, toggleGroupAction, groupPageAction, groupSelectAllAction, groupSaveAction, groupSyncAction, addGroupScene, onBotAddedToGroup } = require('./guruhlar');
-const { habarMatniHandler, textMsgScene, photoMsgScene, buttonMsgScene } = require('./habarMatni');
+const { habarMatniHandler, textMsgScene, photoMsgScene, buttonMsgScene, forwardMsgScene, multiMsgScene } = require('./habarMatni');
 const { profillarHandler, profileDetailAction, profileToggleAction, profileDeleteAction } = require('./profillar');
 
 // ─── Sender (Autohabar) ───────────────────────────────────────────────────────
@@ -45,6 +45,8 @@ const stage = new Scenes.Stage([
   textMsgScene,
   photoMsgScene,
   buttonMsgScene,
+  forwardMsgScene,
+  multiMsgScene,
 ]);
 bot.use(session());
 bot.use(stage.middleware());
@@ -101,7 +103,7 @@ async function showMainMenu(ctx) {
   if (!acc) {
     const safeName = escapeMdV2(ctx.from.first_name);
     const menuText =
-      `◇ *AUTO HABAR PRO*\n` +
+      `◇ *AUTO HABARCHI ZN BOT*\n` +
       `${'─'.repeat(30)}\n\n` +
       `Salom, ${safeName} 👋\n\n` +
       `>› Akkaunt qo'shing\n` +
@@ -230,8 +232,10 @@ async function buildControlPanel(ctx) {
     }
   }
 
-  const msgType = msg?.type === 'photo' ? 'Rasm+matn'
-                : msg?.type === 'button' ? 'Tugmali matn'
+  const msgType = msg?.type === 'photo'   ? 'Rasm+matn'
+                : msg?.type === 'button'  ? 'Tugmali matn'
+                : msg?.type === 'forward' ? 'Forward'
+                : msg?.type === 'multi'   ? `Turli habarlar (${msg.variants?.length || 0})`
                 : msg?.text ? 'Matn' : 'Sozlanmagan';
 
   const phoneDisplay    = acc ? `++${acc.phone.replace(/^\+/, '')}` : '❌';
@@ -284,7 +288,10 @@ bot.action('autohabar_start', async (ctx) => {
 
   const { MsgSettings } = require('./habarMatni');
   const msg = await MsgSettings.findOne({ userId });
-  if (!msg?.text) return ctx.answerCbQuery('❌ Avval habar matnini kiriting!', { show_alert: true });
+  const hasContent = msg?.type === 'multi'
+    ? (msg.variants || []).some(v => v.text || v.photoId)
+    : !!(msg?.text || msg?.photoId);
+  if (!hasContent) return ctx.answerCbQuery('❌ Avval habar matnini kiriting!', { show_alert: true });
 
   await startAutoSend(userId, bot);
   await renderControlPanel(ctx, { edit: true });
@@ -372,6 +379,8 @@ bot.action('add_group_manual',  (ctx) => { ctx.answerCbQuery(); ctx.scene.enter(
 bot.action('msg_type_text',           (ctx) => { ctx.answerCbQuery(); ctx.scene.enter('TEXT_MSG'); });
 bot.action('msg_type_photo',          (ctx) => { ctx.answerCbQuery(); ctx.scene.enter('PHOTO_MSG'); });
 bot.action('msg_type_button',         (ctx) => { ctx.answerCbQuery(); ctx.scene.enter('BUTTON_MSG'); });
+bot.action('msg_type_forward',        (ctx) => { ctx.answerCbQuery(); ctx.scene.enter('FORWARD_MSG'); });
+bot.action('msg_type_multi',          (ctx) => { ctx.answerCbQuery(); ctx.scene.enter('MULTI_MSG'); });
 
 // Profil actions
 bot.action(/^profile_detail_/, profileDetailAction);
