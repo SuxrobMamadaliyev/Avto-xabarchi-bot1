@@ -11,11 +11,9 @@ const Account = require('./Account');
 
 // ─── Handlers ────────────────────────────────────────────────────────────────
 const addAccountScene = require('./addAccount');
-const { getEffectiveTarif } = require('./addAccount');
 
-// ─── Referral +1, va 15 taga yetganda avto 7 kunlik Pro ──────────────────────
+// ─── Referral +1 ──────────────────────────────────────────────────────────────
 async function grantReferral(referrerId, ctx) {
-  const REF_GOAL = 15;
   const updated = await User.findOneAndUpdate(
     { userId: referrerId },
     { $inc: { referralCount: 1 } },
@@ -26,33 +24,14 @@ async function grantReferral(referrerId, ctx) {
   try {
     await ctx.telegram.sendMessage(
       referrerId,
-      `🎉 Sizning havolangiz orqali yangi foydalanuvchi qo'shildi! (${updated.referralCount}/${REF_GOAL})`
+      `🎉 Sizning havolangiz orqali yangi foydalanuvchi qo'shildi! (${updated.referralCount})`
     );
   } catch {}
-
-  if (updated.referralCount >= REF_GOAL) {
-    const now  = new Date();
-    const base = (updated.proExpiresAt && updated.proExpiresAt > now) ? updated.proExpiresAt : now;
-    const newExpiry = new Date(base.getTime() + 7 * 24 * 60 * 60 * 1000);
-
-    await User.findOneAndUpdate(
-      { userId: referrerId },
-      { tarif: 'pro', proExpiresAt: newExpiry, referralCount: 0 }
-    );
-
-    try {
-      await ctx.telegram.sendMessage(
-        referrerId,
-        `🎁 *Tabriklaymiz!* 15 ta do'stingiz obuna bo'ldi!\n\n💎 Sizga *bepul 7 kunlik Pro tarif* berildi!\n📅 Muddat: ${newExpiry.toLocaleDateString('uz-UZ')} gacha`,
-        { parse_mode: 'Markdown' }
-      );
-    } catch {}
-  }
 }
 
 const { intervalHandler, setIntervalAction, intervalInfoAction, intervalManualScene } = require('./interval');
 const { guruhlarHandler, groupModeAllAction, groupModeSelectAction, toggleGroupAction, groupPageAction, groupSelectAllAction, groupSaveAction, groupSyncAction, addGroupScene, onBotAddedToGroup } = require('./guruhlar');
-const { habarMatniHandler, msgForwardLockedAction, msgMultiLockedAction, textMsgScene, photoMsgScene, buttonMsgScene } = require('./habarMatni');
+const { habarMatniHandler, textMsgScene, photoMsgScene, buttonMsgScene } = require('./habarMatni');
 const { profillarHandler, profileDetailAction, profileToggleAction, profileDeleteAction } = require('./profillar');
 
 // ─── Sender (Autohabar) ───────────────────────────────────────────────────────
@@ -74,32 +53,6 @@ bot.use(stage.middleware());
 mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log('✅ MongoDB ulandi'))
   .catch(err => console.error('❌ MongoDB xato:', err));
-
-// ─── CRON: Pro muddati tugaganlarni Free ga tushirish ────────────────────────
-async function checkExpiredProUsers() {
-  try {
-    const now = new Date();
-    const expired = await User.find({ tarif: 'pro', proExpiresAt: { $lt: now } });
-
-    for (const user of expired) {
-      await User.findOneAndUpdate({ userId: user.userId }, { tarif: 'free' });
-      console.log(`[cron] userId:${user.userId} Pro muddati tugadi → Free`);
-      try {
-        await bot.telegram.sendMessage(
-          user.userId,
-          '⏰ *Pro tarif muddati tugadi!*\n\nSiz Free tarifga o\'tkazildingiz.\nDavom etish uchun qayta faollashtiring: 👑 Pro tarif',
-          { parse_mode: 'Markdown' }
-        );
-      } catch {}
-    }
-
-    if (expired.length) console.log(`[cron] ${expired.length} ta foydalanuvchi Free ga tushirildi`);
-  } catch (err) {
-    console.error('[cron] xato:', err.message);
-  }
-}
-setInterval(checkExpiredProUsers, 60 * 60 * 1000);
-setTimeout(checkExpiredProUsers, 10 * 1000);
 
 // ─── MAJBURIY OBUNA ───────────────────────────────────────────────────────────
 const CHANNELS = process.env.CHANNELS
@@ -164,7 +117,6 @@ async function showMainMenu(ctx) {
 
   const user = await User.findOne({ userId: ctx.from.id });
   const interval = user?.interval || 300;
-  const tarif    = user?.tarif === 'pro' ? 'Pro' : 'Bepul';
   const running  = user?.isRunning || isRunning(ctx.from.id);
 
   const panelText =
@@ -172,7 +124,6 @@ async function showMainMenu(ctx) {
     `${'━'.repeat(20)}\n\n` +
     `📱 Ulangan: \`${escapeMdV2Code(acc.phone)}\`\n\n` +
     `🚀 Auto Habar: ${running ? '🟢 Yoqiq' : '🔴 O\'chiq'}\n` +
-    `💎 Tarifingiz: 🔘 ${escapeMdV2(tarif)}\n` +
     `⏱ Interval: ${interval} soniya\n` +
     `${'━'.repeat(20)}\n\n` +
     `👇 Kerakli tugmani pastdan tanlang:`;
@@ -389,15 +340,7 @@ bot.action(/^autostop_(\d+)$/, async (ctx) => {
 
 bot.action('autohabar_mention', async (ctx) => {
   const userId = ctx.from.id;
-  await getEffectiveTarif(userId);
-
   const user  = await User.findOne({ userId });
-  const isPro = user?.tarif === 'pro';
-
-  if (!isPro) {
-    await ctx.answerCbQuery("👑 Mention faqat Pro tarifda ishlaydi!", { show_alert: true });
-    return;
-  }
 
   const newVal = !user?.mentionEnabled;
   await User.findOneAndUpdate({ userId }, { mentionEnabled: newVal }, { upsert: true });
@@ -429,8 +372,6 @@ bot.action('add_group_manual',  (ctx) => { ctx.answerCbQuery(); ctx.scene.enter(
 bot.action('msg_type_text',           (ctx) => { ctx.answerCbQuery(); ctx.scene.enter('TEXT_MSG'); });
 bot.action('msg_type_photo',          (ctx) => { ctx.answerCbQuery(); ctx.scene.enter('PHOTO_MSG'); });
 bot.action('msg_type_button',         (ctx) => { ctx.answerCbQuery(); ctx.scene.enter('BUTTON_MSG'); });
-bot.action('msg_type_forward_locked', msgForwardLockedAction);
-bot.action('msg_type_multi_locked',   msgMultiLockedAction);
 
 // Profil actions
 bot.action(/^profile_detail_/, profileDetailAction);
@@ -454,174 +395,6 @@ bot.hears('⏱ Interval',            intervalHandler);
 bot.hears('💬 Guruhlarni sozlash', guruhlarHandler);
 bot.hears('👤 Profillar',          profillarHandler);
 
-function progressBar(current, total, size = 15) {
-  const filled = Math.min(size, Math.round((current / total) * size));
-  return '█'.repeat(filled) + '░'.repeat(size - filled);
-}
-
-async function showProTarif(ctx) {
-  const userId = ctx.from.id;
-  await getEffectiveTarif(userId);
-  const user   = await User.findOne({ userId });
-  const tarif  = user?.tarif === 'pro' ? 'Pro' : 'Free';
-  const refCount = user?.referralCount || 0;
-  const refGoal  = 15;
-
-  const botUsername = ctx.botInfo?.username || 'Autoxabarcbot';
-  const refLink = `https://t.me/${botUsername}?start=ref_${userId}_0`;
-
-  const expiryLine = (tarif === 'Pro' && user?.proExpiresAt)
-    ? `📅 Amal qilish muddati: ${new Date(user.proExpiresAt).toLocaleDateString('uz-UZ')} gacha\n\n`
-    : '';
-
-  const text = expiryLine +
-    `💎 <b>AutoHabar Pro</b>\n\n` +
-    `🔋 ${tarif === 'Pro' ? '✅' : '❌'} Siz <b>${tarif}</b> tarifdasiz\n\n` +
-    `<blockquote expandable>` +
-    `🚀 <b>Pro imkoniyatlari:</b>\n\n` +
-    `👤 Ko'p profil: 5 tagacha akkaunt\n` +
-    `❗️ Watermarksiz (reklama belgisi yo'q)\n` +
-    `🔍 Reklamasiz (toza interfeys)\n` +
-    `➡️ Forward xabar yuborish\n` +
-    `🖼 Har profil uchun mustaqil sozlamalar\n` +
-    `⚙️ Tugmali xabar (Inline mode)\n` +
-    `⏰ Tezkor tsikl va minimal kechikish\n` +
-    `🔀 Turli habarlar (2\u20134 xil, navbatma-navbat)\n` +
-    `⚙️ Mention — guruh a'zolarini @ qilish\n` +
-    `🖼 Avtomatik obuna (AutoSub) — kanallarni topib obuna bo'lish` +
-    `</blockquote>\n\n` +
-    `<blockquote expandable>` +
-    `⭐ <b>Narxlar:</b>\n` +
-    `• Karta: 35,000 so'm / 30 kun\n` +
-    `⭐ Stars: 20 / 1 kun\n` +
-    `⭐ Stars: 70 / 7 kun\n` +
-    `⭐ Stars: 250 / 30 kun\n` +
-    `💵 USDT: 0.40 / 1 kun\n` +
-    `💵 USDT: 1.20 / 7 kun\n` +
-    `💵 USDT: 5.00 / 30 kun` +
-    `</blockquote>\n\n` +
-    `<blockquote expandable>` +
-    `🎁 <b>Bepul PRO olish:</b>\n\n` +
-    `Botga <b>${refGoal} ta</b> do'stingizni taklif qiling va <b>bepulga 7 kunlik PRO</b> oling!\n` +
-    `Do'stlaringiz barcha kanallarga obuna bo'lishlari zarur! ✅\n\n` +
-    `📊 Holat: ${refCount}/${refGoal}\n` +
-    `[${progressBar(refCount, refGoal)}]\n\n` +
-    `🔗 Havolangiz:\n${refLink}` +
-    `</blockquote>`;
-
-  await ctx.reply(text, {
-    parse_mode: 'HTML',
-    ...rawInline([
-      [
-        iBtn('🟢 Stars orqali sotib olish', 'pro_buy_stars', 'success'),
-        iBtn('🔵 Karta orqali sotib olish', 'pro_buy_card', 'primary')
-      ]
-    ])
-  });
-}
-
-bot.action('pro_tarif_menu', async (ctx) => { await ctx.answerCbQuery(); await showProTarif(ctx); });
-
-bot.action('pro_buy_stars', async (ctx) => {
-  await ctx.answerCbQuery();
-  await ctx.reply(
-    '⭐ *Stars orqali to\'lov*\n\nKerakli muddatni tanlang:',
-    {
-      parse_mode: 'Markdown',
-      ...rawInline([
-        [iBtn('20 ⭐ / 1 kun', 'pay_stars_20', 'primary')],
-        [iBtn('70 ⭐ / 7 kun', 'pay_stars_70', 'primary')],
-        [iBtn('250 ⭐ / 30 kun', 'pay_stars_250', 'success')]
-      ])
-    }
-  );
-});
-
-bot.action('pro_buy_card', async (ctx) => {
-  await ctx.answerCbQuery();
-  await ctx.reply(
-    '💳 *Karta orqali to\'lov*\n\n35,000 so\'m / 30 kun\n\n📞 To\'lov uchun admin bilan bog\'laning: @admin',
-    { parse_mode: 'Markdown' }
-  );
-});
-
-// ─── STARS TARIFLARI ──────────────────────────────────────────────────────────
-const STARS_PLANS = {
-  20:  { days: 1,  label: '1 kunlik Pro' },
-  70:  { days: 7,  label: '7 kunlik Pro' },
-  250: { days: 30, label: '30 kunlik Pro' }
-};
-
-// ─── Stars invoice yuborish ───────────────────────────────────────────────────
-bot.action(/^pay_stars_(\d+)$/, async (ctx) => {
-  await ctx.answerCbQuery();
-  const amount = parseInt(ctx.match[1], 10);
-  const plan   = STARS_PLANS[amount];
-
-  if (!plan) return ctx.reply('❌ Noto\'g\'ri tarif tanlandi.');
-
-  try {
-    await ctx.telegram.sendInvoice(ctx.chat.id, {
-      title:          `AutoHabar Pro — ${plan.label}`,
-      description:    `Pro tarifga o'tish: ${plan.days} kun davomida barcha Pro imkoniyatlar ochiladi.`,
-      payload:        `pro_${ctx.from.id}_${plan.days}_${Date.now()}`,
-      provider_token: '',
-      currency:       'XTR',
-      prices:         [{ label: plan.label, amount }],
-      start_parameter: `pro_${plan.days}d`
-    });
-  } catch (err) {
-    console.error('[stars] invoice yuborishda xato:', err.message);
-    await ctx.reply(`❌ To'lov oynasini ochib bo'lmadi.\n\`${err.message}\``, { parse_mode: 'Markdown' });
-  }
-});
-
-// ─── Pre-checkout ─────────────────────────────────────────────────────────────
-bot.on('pre_checkout_query', async (ctx) => {
-  try {
-    await ctx.answerPreCheckoutQuery(true);
-  } catch (err) {
-    console.error('[stars] pre_checkout xato:', err.message);
-    await ctx.answerPreCheckoutQuery(false, 'Xatolik yuz berdi, qayta urinib ko\'ring.');
-  }
-});
-
-// ─── To'lov muvaffaqiyatli ────────────────────────────────────────────────────
-bot.on('message', async (ctx, next) => {
-  const payment = ctx.message?.successful_payment;
-  if (!payment) return next();
-
-  try {
-    const userId = ctx.from.id;
-    const parts  = payment.invoice_payload.split('_');
-    const days   = parseInt(parts[2], 10) || 30;
-
-    const user = await User.findOne({ userId });
-    const now  = new Date();
-    const base = (user?.proExpiresAt && user.proExpiresAt > now) ? user.proExpiresAt : now;
-    const newExpiry = new Date(base.getTime() + days * 24 * 60 * 60 * 1000);
-
-    await User.findOneAndUpdate(
-      { userId },
-      { tarif: 'pro', proExpiresAt: newExpiry },
-      { upsert: true }
-    );
-
-    await ctx.reply(
-      `✅ *To'lov muvaffaqiyatli qabul qilindi!*\n\n` +
-      `💎 Pro tarif ${days} kunga faollashtirildi.\n` +
-      `📅 Amal qilish muddati: ${newExpiry.toLocaleDateString('uz-UZ')} gacha\n\n` +
-      `Barcha Pro imkoniyatlar endi ochiq! 🚀`,
-      { parse_mode: 'Markdown' }
-    );
-
-    console.log(`[stars] userId:${userId} Pro tarifga o'tdi (${days} kun, ${payment.total_amount} XTR)`);
-  } catch (err) {
-    console.error('[stars] successful_payment ishlov berishda xato:', err.message);
-    await ctx.reply('⚠️ To\'lov qabul qilindi, lekin faollashtirishda xato yuz berdi. Admin bilan bog\'laning.');
-  }
-});
-
 function daysAgo(date) {
   if (!date) return '—';
   const diffMs = Date.now() - new Date(date).getTime();
@@ -633,7 +406,6 @@ function daysAgo(date) {
 
 async function showKabinet(ctx) {
   const userId = ctx.from.id;
-  await getEffectiveTarif(userId);
 
   const [user, acc, profileCount] = await Promise.all([
     User.findOne({ userId }),
@@ -641,7 +413,6 @@ async function showKabinet(ctx) {
     Account.countDocuments({ userId })
   ]);
 
-  const isPro   = user?.tarif === 'pro';
   const interval = user?.interval || 300;
 
   let groupCount = 0;
@@ -673,8 +444,6 @@ async function showKabinet(ctx) {
     `👥➕ Guruhlar: ${groupCount}\n` +
     `📱 Jami profillar: ${profileCount}\n` +
     `🕐 Qo'shilgan: ${daysAgo(user?.createdAt)}\n\n` +
-    `⭐ Tarif: ${isPro ? '👑 Pro' : '🆓 Free'}\n` +
-    `💎 Premium: ${isPro ? `Pro (${user.proExpiresAt ? new Date(user.proExpiresAt).toLocaleDateString('uz-UZ') : '—'} gacha)` : "Pro yo'q"}\n` +
     `⏱ Interval: ${interval} soniya`;
 
   const kb = rawInline([
