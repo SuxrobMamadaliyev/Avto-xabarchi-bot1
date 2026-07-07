@@ -33,6 +33,7 @@ const { intervalHandler, setIntervalAction, intervalInfoAction, intervalManualSc
 const { guruhlarHandler, groupModeAllAction, groupModeSelectAction, toggleGroupAction, groupPageAction, groupSelectAllAction, groupSaveAction, groupSyncAction, addGroupScene, onBotAddedToGroup } = require('./guruhlar');
 const { habarMatniHandler, textMsgScene, photoMsgScene, buttonMsgScene, forwardMsgScene, multiMsgScene } = require('./habarMatni');
 const { profillarHandler, profileDetailAction, profileToggleAction, profileDeleteAction } = require('./profillar');
+const { isAdmin, adminPanelHandler, adminStatsAction, adminJoinGroupScene, adminBroadcastScene } = require('./admin');
 
 // ─── Sender (Autohabar) ───────────────────────────────────────────────────────
 const { startAutoSend, stopAutoSend, isRunning } = require('./sender');
@@ -47,6 +48,8 @@ const stage = new Scenes.Stage([
   buttonMsgScene,
   forwardMsgScene,
   multiMsgScene,
+  adminJoinGroupScene,
+  adminBroadcastScene,
 ]);
 bot.use(session());
 bot.use(stage.middleware());
@@ -80,13 +83,17 @@ function subscribeKeyboard() {
 }
 
 // ─── ASOSIY MENYU (Reply keyboard) ───────────────────────────────────────────
-function mainMenuKeyboard() {
-  return rawReply([
+function mainMenuKeyboard(userId) {
+  const rows = [
     [rBtn('🚀 Autohabar yuborish', 'success'), rBtn('✏️ Habar matni', 'success')],
     [rBtn('⏱ Interval', 'primary'),            rBtn('💬 Guruhlarni sozlash', 'primary')],
-    [rBtn('👤 Profillar', 'danger'),            rBtn('🗂 Kabinet', 'primary')],
+    [rBtn('👤 Profillar', 'primary'),           rBtn('🗂 Kabinet', 'primary')],
     [rBtn('📖 Qo\'llanma', 'danger')],
-  ]);
+  ];
+  if (isAdmin(userId)) {
+    rows.push([rBtn('🛠 Admin panel', 'danger')]);
+  }
+  return rawReply(rows);
 }
 
 function escapeMdV2(text) {
@@ -103,7 +110,7 @@ async function showMainMenu(ctx) {
   if (!acc) {
     const safeName = escapeMdV2(ctx.from.first_name);
     const menuText =
-      `◇ *AUTO HABARCHI ZN BOT*\n` +
+      `◇ *AUTO HABAR PRO*\n` +
       `${'─'.repeat(30)}\n\n` +
       `Salom, ${safeName} 👋\n\n` +
       `>› Akkaunt qo'shing\n` +
@@ -175,7 +182,7 @@ bot.start(async (ctx) => {
   }
 
   await ctx.reply('✅ Obuna tasdiqlandi!');
-  await ctx.reply('📊 *Asosiy menyu:*', { parse_mode: 'Markdown', ...mainMenuKeyboard() });
+  await ctx.reply('📊 *Asosiy menyu:*', { parse_mode: 'Markdown', ...mainMenuKeyboard(ctx.from.id) });
   await showMainMenu(ctx);
 });
 
@@ -195,7 +202,7 @@ bot.action('check_sub', async (ctx) => {
   }
 
   await ctx.reply('✅ Obuna tasdiqlandi!');
-  await ctx.reply('📊 *Asosiy menyu:*', { parse_mode: 'Markdown', ...mainMenuKeyboard() });
+  await ctx.reply('📊 *Asosiy menyu:*', { parse_mode: 'Markdown', ...mainMenuKeyboard(ctx.from.id) });
   await showMainMenu(ctx);
 });
 
@@ -403,6 +410,17 @@ bot.hears('✏️ Habar matni',        habarMatniHandler);
 bot.hears('⏱ Interval',            intervalHandler);
 bot.hears('💬 Guruhlarni sozlash', guruhlarHandler);
 bot.hears('👤 Profillar',          profillarHandler);
+bot.hears('🛠 Admin panel', async (ctx) => {
+  if (!isAdmin(ctx.from.id)) return; // oddiy foydalanuvchilarga bu tugma umuman ko'rinmaydi
+  await adminPanelHandler(ctx);
+});
+
+// Admin panel actions
+bot.action('admin_panel',      async (ctx) => { await ctx.answerCbQuery(); await adminPanelHandler(ctx); });
+bot.action('admin_stats',      adminStatsAction);
+bot.action('admin_join_group', (ctx) => { if (!isAdmin(ctx.from.id)) return ctx.answerCbQuery(); ctx.answerCbQuery(); ctx.scene.enter('ADMIN_JOIN_GROUP'); });
+bot.action('admin_broadcast',  (ctx) => { if (!isAdmin(ctx.from.id)) return ctx.answerCbQuery(); ctx.answerCbQuery(); ctx.scene.enter('ADMIN_BROADCAST'); });
+bot.action('admin_close',      async (ctx) => { await ctx.answerCbQuery(); try { await ctx.deleteMessage(); } catch {} });
 
 function daysAgo(date) {
   if (!date) return '—';
