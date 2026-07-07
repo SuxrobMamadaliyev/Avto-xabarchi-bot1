@@ -26,28 +26,17 @@ async function habarMatniHandler(ctx) {
     `👾 *Habarni sozlash*\n\n` +
     `Joriy tur: ${typeLabel[msg?.type || 'text']}\n` +
     `Xabar:     ${msg?.text ? msg.text.slice(0, 30) + (msg.text.length > 30 ? '...' : '') : 'Sozlanmagan'}\n\n` +
-    `Forward faqat Pro tarifda ⚡\n\n` +
     `👇 Xabar turini tanlang:`,
     {
       parse_mode: 'Markdown',
       ...rawInline([
         [iBtn('📝 Matn',              'msg_type_text',           'primary')],
         [iBtn('🖼 Rasm+matn',         'msg_type_photo',          'primary')],
-        [iBtn('➡️ Forward 🔒',        'msg_type_forward_locked', 'danger')],
         [iBtn('🔘 Tugmali habar',     'msg_type_button',         'primary')],
-        [iBtn('📋 Turli habarlar 🔒', 'msg_type_multi_locked',   'danger')],
         [iBtn('⬅️ Orqaga',           'main_menu')]
       ])
     }
   );
-}
-
-async function msgForwardLockedAction(ctx) {
-  await ctx.answerCbQuery('🔒 Bu funksiya faqat Pro tarifda!', { show_alert: true });
-}
-
-async function msgMultiLockedAction(ctx) {
-  await ctx.answerCbQuery('🔒 Bu funksiya faqat Pro tarifda!', { show_alert: true });
 }
 
 // ─── MATN SCENE ──────────────────────────────────────────────────────────────
@@ -275,8 +264,6 @@ buttonMsgScene.action('cancel_msg',      async (ctx) => { await ctx.answerCbQuer
 
 module.exports = {
   habarMatniHandler,
-  msgForwardLockedAction,
-  msgMultiLockedAction,
   textMsgScene,
   photoMsgScene,
   buttonMsgScene,
