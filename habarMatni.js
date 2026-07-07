@@ -3,12 +3,14 @@ const { iBtn, rawInline } = require('./styledKb');
 const mongoose = require('mongoose');
 
 const msgSchema = new mongoose.Schema({
-  userId:    { type: Number, required: true, unique: true },
-  type:      { type: String, default: 'text' },
-  text:      { type: String },
-  photoId:   { type: String },
-  buttons:   { type: Array, default: [] },
-  updatedAt: { type: Date, default: Date.now }
+  userId:       { type: Number, required: true, unique: true },
+  type:         { type: String, default: 'text' },
+  text:         { type: String },
+  photoId:      { type: String },
+  buttons:      { type: Array, default: [] },
+  variants:     { type: Array, default: [] }, // 'multi' turi uchun: [{ text, photoId }]
+  variantIndex: { type: Number, default: 0 },
+  updatedAt:    { type: Date, default: Date.now }
 });
 const MsgSettings = mongoose.models.MsgSettings || mongoose.model('MsgSettings', msgSchema);
 
@@ -17,22 +19,30 @@ async function habarMatniHandler(ctx) {
   const msg = await MsgSettings.findOne({ userId: ctx.from.id });
 
   const typeLabel = {
-    text:   '📝 Matn',
-    photo:  '🖼 Rasm+matn',
-    button: '🔘 Tugmali habar'
+    text:    '📝 Matn',
+    photo:   '🖼 Rasm+matn',
+    button:  '🔘 Tugmali habar',
+    forward: '➡️ Forward',
+    multi:   '📋 Turli habarlar'
   };
+
+  const currentDesc = msg?.type === 'multi'
+    ? `${msg.variants?.length || 0} ta xabar navbat bilan`
+    : (msg?.text ? msg.text.slice(0, 30) + (msg.text.length > 30 ? '...' : '') : 'Sozlanmagan');
 
   await ctx.reply(
     `👾 *Habarni sozlash*\n\n` +
     `Joriy tur: ${typeLabel[msg?.type || 'text']}\n` +
-    `Xabar:     ${msg?.text ? msg.text.slice(0, 30) + (msg.text.length > 30 ? '...' : '') : 'Sozlanmagan'}\n\n` +
+    `Xabar:     ${currentDesc}\n\n` +
     `👇 Xabar turini tanlang:`,
     {
       parse_mode: 'Markdown',
       ...rawInline([
         [iBtn('📝 Matn',              'msg_type_text',           'primary')],
         [iBtn('🖼 Rasm+matn',         'msg_type_photo',          'primary')],
+        [iBtn('➡️ Forward',          'msg_type_forward',        'primary')],
         [iBtn('🔘 Tugmali habar',     'msg_type_button',         'primary')],
+        [iBtn('📋 Turli habarlar',    'msg_type_multi',          'primary')],
         [iBtn('⬅️ Orqaga',           'main_menu')]
       ])
     }
@@ -262,10 +272,172 @@ const buttonMsgScene = new Scenes.WizardScene(
 buttonMsgScene.action('save_no_buttons', async (ctx) => { await ctx.answerCbQuery(); });
 buttonMsgScene.action('cancel_msg',      async (ctx) => { await ctx.answerCbQuery(); await ctx.scene.leave(); });
 
+// ─── FORWARD SCENE ───────────────────────────────────────────────────────────
+// Foydalanuvchi istalgan xabarni (matn yoki rasm) botga forward qiladi/yuboradi,
+// bot uni saqlab, keyin guruhlarga shu tarzda avtomatik yuboradi.
+const forwardMsgScene = new Scenes.WizardScene(
+  'FORWARD_MSG',
+
+  async (ctx) => {
+    await ctx.reply(
+      '➡️ *Forward xabar*\n\n' +
+      'Istalgan kanal/guruhdagi xabarni botga forward qiling ' +
+      '(yoki shunchaki matn/rasm yuboring) — u aynan shu holatda guruhlarga yuboriladi.',
+      {
+        parse_mode: 'Markdown',
+        ...rawInline([[iBtn('❌ Bekor qilish', 'cancel_msg', 'danger')]])
+      }
+    );
+    return ctx.wizard.next();
+  },
+
+  async (ctx) => {
+    if (ctx.callbackQuery?.data === 'cancel_msg') {
+      await ctx.answerCbQuery();
+      await ctx.scene.leave();
+      return habarMatniHandler(ctx);
+    }
+
+    const text  = ctx.message?.text?.trim() || ctx.message?.caption?.trim() || '';
+    const photo = ctx.message?.photo;
+    const photoId = photo ? photo[photo.length - 1].file_id : undefined;
+
+    if (!text && !photoId) {
+      await ctx.reply('⚠️ Iltimos, matn yoki rasm (forward) yuboring:');
+      return;
+    }
+
+    await MsgSettings.findOneAndUpdate(
+      { userId: ctx.from.id },
+      {
+        userId: ctx.from.id,
+        type: 'forward',
+        text,
+        photoId: photoId || undefined,
+        updatedAt: new Date()
+      },
+      { upsert: true }
+    );
+
+    await ctx.reply('✅ *Forward xabar saqlandi!*', { parse_mode: 'Markdown' });
+    await ctx.scene.leave();
+    return habarMatniHandler(ctx);
+  }
+);
+
+forwardMsgScene.action('cancel_msg', async (ctx) => { await ctx.answerCbQuery(); await ctx.scene.leave(); });
+
+// ─── TURLI HABARLAR (MULTI) SCENE ────────────────────────────────────────────
+// Foydalanuvchi 2-4 ta turli xabar (matn yoki rasm+matn) kiritadi, autohabar
+// har safar navbat bilan boshqa variantni yuboradi.
+const MULTI_MIN = 2;
+const MULTI_MAX = 4;
+
+const multiMsgScene = new Scenes.WizardScene(
+  'MULTI_MSG',
+
+  async (ctx) => {
+    ctx.wizard.state.variants = [];
+    await ctx.reply(
+      `📋 *Turli habarlar*\n\n` +
+      `Navbat bilan yuboriladigan ${MULTI_MIN}-${MULTI_MAX} ta xabar kiriting.\n` +
+      `Har biri matn yoki rasm+matn bo'lishi mumkin.\n\n` +
+      `1-xabarni yuboring:`,
+      {
+        parse_mode: 'Markdown',
+        ...rawInline([[iBtn('❌ Bekor qilish', 'cancel_msg', 'danger')]])
+      }
+    );
+    return ctx.wizard.next();
+  },
+
+  async (ctx) => {
+    if (ctx.callbackQuery?.data === 'cancel_msg') {
+      await ctx.answerCbQuery();
+      await ctx.scene.leave();
+      return habarMatniHandler(ctx);
+    }
+
+    if (ctx.callbackQuery?.data === 'multi_done') {
+      await ctx.answerCbQuery();
+      const variants = ctx.wizard.state.variants || [];
+      if (variants.length < MULTI_MIN) {
+        return ctx.answerCbQuery(`⚠️ Kamida ${MULTI_MIN} ta xabar kerak!`, { show_alert: true });
+      }
+
+      await MsgSettings.findOneAndUpdate(
+        { userId: ctx.from.id },
+        {
+          userId: ctx.from.id,
+          type: 'multi',
+          variants,
+          variantIndex: 0,
+          text: variants[0]?.text || '',
+          photoId: variants[0]?.photoId,
+          updatedAt: new Date()
+        },
+        { upsert: true }
+      );
+
+      await ctx.reply(`✅ *${variants.length} ta xabar saqlandi!* Navbat bilan yuboriladi.`, { parse_mode: 'Markdown' });
+      await ctx.scene.leave();
+      return habarMatniHandler(ctx);
+    }
+
+    const text  = ctx.message?.text?.trim() || ctx.message?.caption?.trim() || '';
+    const photo = ctx.message?.photo;
+    const photoId = photo ? photo[photo.length - 1].file_id : undefined;
+
+    if (!text && !photoId) {
+      await ctx.reply('⚠️ Matn yoki rasm yuboring:');
+      return;
+    }
+
+    ctx.wizard.state.variants.push({ text, photoId });
+    const count = ctx.wizard.state.variants.length;
+
+    if (count >= MULTI_MAX) {
+      const variants = ctx.wizard.state.variants;
+      await MsgSettings.findOneAndUpdate(
+        { userId: ctx.from.id },
+        {
+          userId: ctx.from.id,
+          type: 'multi',
+          variants,
+          variantIndex: 0,
+          text: variants[0]?.text || '',
+          photoId: variants[0]?.photoId,
+          updatedAt: new Date()
+        },
+        { upsert: true }
+      );
+      await ctx.reply(`✅ *${variants.length} ta xabar saqlandi!* Navbat bilan yuboriladi.`, { parse_mode: 'Markdown' });
+      await ctx.scene.leave();
+      return habarMatniHandler(ctx);
+    }
+
+    await ctx.reply(
+      `✅ ${count}-xabar qabul qilindi.\n\n${count + 1}-xabarni yuboring ` +
+      `(yoki tugatish uchun tugmani bosing):`,
+      {
+        ...rawInline([
+          ...(count >= MULTI_MIN ? [[iBtn('✅ Tugatish', 'multi_done', 'success')]] : []),
+          [iBtn('❌ Bekor qilish', 'cancel_msg', 'danger')]
+        ])
+      }
+    );
+  }
+);
+
+multiMsgScene.action('cancel_msg', async (ctx) => { await ctx.answerCbQuery(); await ctx.scene.leave(); });
+multiMsgScene.action('multi_done', async (ctx) => {}); // handled inline above (falls through to wizard step)
+
 module.exports = {
   habarMatniHandler,
   textMsgScene,
   photoMsgScene,
   buttonMsgScene,
+  forwardMsgScene,
+  multiMsgScene,
   MsgSettings
 };
