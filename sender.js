@@ -8,10 +8,7 @@ function fetchLiveGroups() { return require('./guruhlar').fetchLiveGroups; }
 
 const activeTimers = new Map();
 
-// ─── Free tarif watermark ─────────────────────────────────────────────────────
-const WATERMARK = '\n\n〰️〰️〰️\n🤖 @Autoxabarcbot orqali yuborildi';
-
-// ─── Mention: guruhdan bir nechta a'zoni @ qilib chaqirish (Pro funksiyasi) ──
+// ─── Mention: guruhdan bir nechta a'zoni @ qilib chaqirish ───────────────────
 async function buildMentionSuffix(client, targetId) {
   try {
     const participants = await client.getParticipants(targetId, { limit: 30 });
@@ -58,9 +55,7 @@ async function sendToGroups(userId, bot) {
     return false;
   }
 
-  // ─── Pro / Free tekshiruvi ────────────────────────────────────────────────
-  const isPro = user.tarif === 'pro' && (!user.proExpiresAt || user.proExpiresAt > new Date());
-  const mentionOn = isPro && user.mentionEnabled; // mention faqat Pro'da ishlaydi
+  const mentionOn = !!user.mentionEnabled;
 
   // ─── Avto-o'chirish limiti tekshiruvi ────────────────────────────────────
   if (user.autoStopLimit && user.sentCount >= user.autoStopLimit) {
@@ -122,16 +117,12 @@ async function sendToGroups(userId, bot) {
           ? BigInt(group.groupId)
           : group.groupId;
 
-        // ─── Xabar matnini tayyorlash: base + mention (Pro) + watermark (Free) ──
+        // ─── Xabar matnini tayyorlash: base + mention ────────────────────────
         let finalText = msg.text;
 
         if (mentionOn) {
           const mentionSuffix = await buildMentionSuffix(client, targetId);
           finalText += mentionSuffix;
-        }
-
-        if (!isPro) {
-          finalText += WATERMARK; // Free tarifda majburiy watermark
         }
 
         await client.sendMessage(targetId, { message: finalText });
