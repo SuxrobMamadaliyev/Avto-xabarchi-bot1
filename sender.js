@@ -8,6 +8,37 @@ function fetchLiveGroups() { return require('./guruhlar').fetchLiveGroups; }
 
 const activeTimers = new Map();
 
+// ─── Bot API orqali yuklangan faylni (photoId) baytlarga aylantirish ────────
+// GramJS (user session) Bot API file_id'ni bevosita ishlata olmaydi, shuning
+// uchun rasmni bot orqali yuklab olib, keyin foydalanuvchi akkaunti orqali
+// qayta yuboramiz.
+async function downloadBotFile(bot, fileId) {
+  const link = await bot.telegram.getFileLink(fileId);
+  const res  = await fetch(link.href || link);
+  const arr  = await res.arrayBuffer();
+  return Buffer.from(arr);
+}
+
+// ─── Yuboriladigan xabar mazmunini turi bo'yicha aniqlash ───────────────────
+// 'multi' turida har chaqiriqda navbatdagi variant tanlanadi va DB'da
+// keyingi safar uchun indeks yangilanadi.
+async function resolveContent(userId, msg, User) {
+  if (msg.type === 'multi') {
+    const variants = (msg.variants || []).filter(v => v.text || v.photoId);
+    if (!variants.length) return { text: '', photoId: null };
+
+    const idx = ((msg.variantIndex || 0) % variants.length + variants.length) % variants.length;
+    const variant = variants[idx];
+
+    const nextIndex = (idx + 1) % variants.length;
+    await require('./habarMatni').MsgSettings.findOneAndUpdate({ userId }, { variantIndex: nextIndex });
+
+    return { text: variant.text || '', photoId: variant.photoId || null };
+  }
+
+  return { text: msg.text || '', photoId: msg.photoId || null };
+}
+
 // ─── Mention: guruhdan bir nechta a'zoni @ qilib chaqirish ───────────────────
 async function buildMentionSuffix(client, targetId) {
   try {
@@ -46,7 +77,11 @@ async function sendToGroups(userId, bot) {
     return false;
   }
 
-  if (!msg?.text) {
+  const hasContent = msg?.type === 'multi'
+    ? (msg.variants || []).some(v => v.text || v.photoId)
+    : !!(msg?.text || msg?.photoId);
+
+  if (!hasContent) {
     await bot.telegram.sendMessage(userId,
       '❌ *Habar matni yo\'q!*\n✏️ Habar matnini kiriting.',
       { parse_mode: 'Markdown' }
@@ -93,6 +128,18 @@ async function sendToGroups(userId, bot) {
     return false;
   }
 
+  // ─── Yuboriladigan mazmun (multi bo'lsa navbatdagi variant tanlanadi) ────
+  const { text: baseText, photoId } = await resolveContent(userId, msg, User);
+
+  let photoBuffer = null;
+  if (photoId) {
+    try {
+      photoBuffer = await downloadBotFile(bot, photoId);
+    } catch (err) {
+      console.error('[sender] rasm yuklashda xato:', err.message);
+    }
+  }
+
   // ─── GramJS client ────────────────────────────────────────────────────────
   const client = new TelegramClient(
     new StringSession(account.session),
@@ -118,14 +165,18 @@ async function sendToGroups(userId, bot) {
           : group.groupId;
 
         // ─── Xabar matnini tayyorlash: base + mention ────────────────────────
-        let finalText = msg.text;
+        let finalText = baseText;
 
         if (mentionOn) {
           const mentionSuffix = await buildMentionSuffix(client, targetId);
           finalText += mentionSuffix;
         }
 
-        await client.sendMessage(targetId, { message: finalText });
+        if (photoBuffer) {
+          await client.sendFile(targetId, { file: photoBuffer, caption: finalText });
+        } else {
+          await client.sendMessage(targetId, { message: finalText });
+        }
         sent++;
         console.log(`[sender] ✅ ${group.groupName} (userId:${userId})`);
       } catch (err) {
